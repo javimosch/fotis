@@ -9,8 +9,8 @@ const port = process.env.PORT || 3001;
 app.use(express.json());
 
 // Routes will be imported here
-// app.use('/media', require('./routes/media'));
-// app.use('/admin', require('./routes/admin'));
+app.use('/media', require('./routes/media'));
+app.use('/admin', require('./routes/admin'));
 
 // Basic error handler
 app.use((err, req, res, next) => {
