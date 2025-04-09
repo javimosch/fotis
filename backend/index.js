@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { MongoClient } = require('mongodb');
+const path = require('path');
 const Indexer = require('./services/indexer');
 const ThumbnailGenerationService = require('./services/thumbnailGenerator');
 
@@ -11,6 +12,9 @@ const startServer = async () => {
 
     // Add JSON body parsing middleware
     app.use(express.json());
+
+    // Serve static files from public directory
+    app.use(express.static(path.join(__dirname, 'public')));
 
     console.log('Connecting to MongoDB...');
     const client = await MongoClient.connect(process.env.MONGO_URI);
@@ -30,6 +34,11 @@ const startServer = async () => {
     // Routes
     app.use('/media', require('./routes/media'));
     app.use('/admin', require('./routes/admin'));
+
+    // Serve index.html for root route
+    app.get('/', (req, res) => {
+      res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
 
     // Basic error handler
     app.use((err, req, res, next) => {
