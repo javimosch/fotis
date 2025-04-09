@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { ObjectId } = require('mongodb');
 
 // Trigger indexing job
 router.post('/index', async (req, res, next) => {
@@ -51,6 +52,19 @@ router.get('/stats', async (req, res, next) => {
     
     const stats = await indexer.getStatus(sourceId);
     res.json(stats);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get indexing history
+router.get('/index/history', async (req, res, next) => {
+  try {
+    const { sourceId } = req.query;
+    const indexer = req.app.locals.indexer;
+    
+    const history = await indexer.getHistory(sourceId);
+    res.json(history);
   } catch (error) {
     next(error);
   }

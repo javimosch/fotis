@@ -1,4 +1,5 @@
 const { MAX_FILE_READS_PER_SECOND } = process.env;
+const { ObjectId } = require('mongodb');
 
 class Indexer {
   constructor(db) {
@@ -18,7 +19,25 @@ class Indexer {
       // 2. Scan files (local or SFTP)
       // 3. Generate thumbnails
       // 4. Update database
+
+      // Store indexing history
+      await this.db.collection('indexing_history').insertOne({
+        sourceId: new ObjectId(sourceId),
+        timestamp: new Date(),
+        totalFiles: 0, // TODO: Update with actual counts
+        processedFiles: 0,
+        status: 'completed'
+      });
     } catch (error) {
+      // Store failed indexing attempt
+      await this.db.collection('indexing_history').insertOne({
+        sourceId: new ObjectId(sourceId),
+        timestamp: new Date(),
+        totalFiles: 0,
+        processedFiles: 0,
+        status: 'failed',
+        error: error.message
+      });
       console.error('Indexing error:', error);
       throw error;
     } finally {
@@ -34,6 +53,13 @@ class Indexer {
       processedFiles: 0,
       lastIndexed: null
     };
+  }
+
+  async getHistory(sourceId) {
+    return await this.db.collection('indexing_history')
+      .find({ sourceId: new ObjectId(sourceId) })
+      .sort({ timestamp: -1 })
+      .toArray();
   }
 }
 

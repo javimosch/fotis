@@ -40,3 +40,8 @@ export async function getIndexingStatus(sourceId) {
   const response = await api.get('/admin/stats', { params: { sourceId } });
   return response.data;
 }
+
+export async function getIndexingHistory(sourceId) {
+  const response = await api.get('/admin/index/history', { params: { sourceId } });
+  return response.data;
+}

@@ -206,4 +206,42 @@ export function adminCommands(program) {
         await checkStatus();
       }
     });
+
+  indexing
+    .command('history')
+    .description('Show indexing history for a source')
+    .requiredOption('--source-id <id>', 'Source ID to check')
+    .action(async (options) => {
+      const spinner = ora('Fetching indexing history...').start();
+      try {
+        const history = await api.getIndexingHistory(options.sourceId);
+        spinner.stop();
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(history, null, 2));
+        } else {
+          console.log(chalk.bold('\nIndexing History:'));
+          if (history.length === 0) {
+            console.log(chalk.yellow('\nNo indexing history found for this source.'));
+          } else {
+            history.forEach(entry => {
+              console.log(chalk.cyan(`\n• ${new Date(entry.timestamp).toLocaleString()}`));
+              console.log(`  Status: ${entry.status}`);
+              console.log(`  Total Files: ${entry.totalFiles}`);
+              console.log(`  Processed: ${entry.processedFiles}`);
+              if (entry.error) {
+                console.log(chalk.red(`  Error: ${entry.error}`));
+              }
+            });
+          }
+        }
+      } catch (error) {
+        spinner.fail('Failed to fetch indexing history');
+        logError(error, 'Indexing History Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
 }
