@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
+const path = require('path');
 
 // Get indexed media with pagination and filters
 router.get('/', async (req, res, next) => {
@@ -66,8 +67,32 @@ router.get('/thumb/:hash', async (req, res, next) => {
   try {
     const { hash } = req.params;
     logger.debug('Thumbnail request:', { hash });
-    // TODO: Implement thumbnail serving
-    res.sendFile(path.join(process.env.CACHE_DIR, `${hash}.jpg`));
+
+    // Get media info from database
+    const db = req.app.locals.db;
+    const media = await db.collection('media').findOne({ hash });
+
+    if (!media) {
+      logger.debug('Thumbnail not found:', { hash });
+      return res.status(404).json({ error: 'Thumbnail not found' });
+    }
+
+    logger.debug('Found media:', {
+      path: media.path,
+      type: media.type
+    });
+
+    // For now, serve the original file since thumbnails aren't generated yet
+    // TODO: Serve actual thumbnail once implemented
+    const absolutePath = path.resolve(media.path);
+    logger.debug('Serving file from:', absolutePath);
+
+    res.sendFile(absolutePath, (err) => {
+      if (err) {
+        logger.error('Error sending file:', err);
+        next(err);
+      }
+    });
   } catch (error) {
     logger.error('Thumbnail error:', error);
     next(error);

@@ -14,9 +14,9 @@ export async function listMedia({ offset, limit, year, month }) {
   return response.data;
 }
 
-export async function getThumb(hash, outputPath) {
+export async function getThumb(hash) {
   const response = await api.get(`/media/thumb/${hash}`, {
-    responseType: 'stream'
+    responseType: 'arraybuffer'
   });
   return response.data;
 }

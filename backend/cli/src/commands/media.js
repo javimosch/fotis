@@ -54,21 +54,16 @@ export function mediaCommands(program) {
       const spinner = ora('Downloading thumbnail...').start();
       
       try {
-        const stream = await api.getThumb(hash);
+        // Create output directory if it doesn't exist
         await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+
+        // Get the thumbnail data
+        const data = await api.getThumb(hash);
+
+        // Write the file
+        await fs.promises.writeFile(outputPath, Buffer.from(data));
         
-        stream.pipe(fs.createWriteStream(outputPath))
-          .on('finish', () => {
-            spinner.succeed(`Thumbnail saved to ${outputPath}`);
-          })
-          .on('error', (error) => {
-            spinner.fail('Failed to save thumbnail');
-            logError(error, 'Thumbnail Save Error');
-            if (program.opts().debug) {
-              console.error(error);
-            }
-            process.exit(1);
-          });
+        spinner.succeed(`Thumbnail saved to ${outputPath}`);
       } catch (error) {
         spinner.fail('Failed to download thumbnail');
         logError(error, 'Thumbnail Download Error');
