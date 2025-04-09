@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { isImage, isVideo, generateFileHash, formatBytes } = require('../utils/fileUtils');
 const ThumbnailService = require('./thumbnails');
+const SftpService = require('./sftp');
 
 class Indexer {
   constructor(db) {
@@ -108,6 +109,7 @@ class Indexer {
         id: source._id.toString()
       });
 
+      let files = [];
       if (source.type === 'local') {
         logger.debug('Processing local source');
         const sourcePath = source.config.path;
@@ -129,54 +131,110 @@ class Indexer {
           throw new Error(`Invalid source path: ${error.message}`);
         }
 
-        const files = await this.scanDirectory(sourcePath);
-        totalFiles = files.length;
-        logger.debug(`Found ${totalFiles} total media files`);
+        files = await this.scanDirectory(sourcePath);
+      } else if (source.type === 'sftp') {
+        logger.debug('Processing SFTP source');
+        const sftp = new SftpService();
+        
+        try {
+          logger.debug('Connecting to SFTP server...', {
+            host: source.config.host,
+            port: source.config.port,
+            user: source.config.user,
+            path: source.config.path
+          });
 
-        const mediaCollection = this.db.collection('media');
-        for (const file of files) {
-          try {
-            logger.debug('Processing file:', {
-              path: file.path,
-              type: file.type,
+          await sftp.connect({
+            host: source.config.host,
+            port: source.config.port || 22,
+            username: source.config.user,
+            password: source.config.pass
+          });
+
+          logger.debug('SFTP connection successful');
+          logger.debug('Listing SFTP directory:', source.config.path);
+
+          const sftpFiles = await sftp.listFiles(source.config.path);
+          logger.debug('SFTP directory listing result:', {
+            totalEntries: sftpFiles.length,
+            firstFew: sftpFiles.slice(0, 3)
+          });
+
+          files = sftpFiles
+            .filter(file => !file.isDirectory)
+            .filter(file => isImage(file.name) || isVideo(file.name))
+            .map(file => ({
+              path: path.join(source.config.path, file.name),
+              type: isImage(file.name) ? 'image' : 'video',
               stats: {
-                size: file.stats.size,
-                modified: file.stats.mtime
+                size: file.size,
+                modified: file.modifyTime
               }
-            });
+            }));
 
-            const hash = generateFileHash(file.path);
-            
-            const mediaDoc = {
-              sourceId: new ObjectId(sourceId),
-              path: file.path,
-              type: file.type,
-              hash,
+          logger.debug('Filtered SFTP files:', {
+            totalFiles: files.length,
+            firstFewPaths: files.slice(0, 3).map(f => f.path)
+          });
+
+          await sftp.disconnect();
+          logger.debug('SFTP connection closed');
+        } catch (error) {
+          logger.error('SFTP error:', {
+            error: error.message,
+            stack: error.stack,
+            phase: 'listing'
+          });
+          throw new Error(`SFTP error: ${error.message}`);
+        }
+      }
+
+      totalFiles = files.length;
+      logger.debug(`Found ${totalFiles} total media files`);
+
+      const mediaCollection = this.db.collection('media');
+      for (const file of files) {
+        try {
+          logger.debug('Processing file:', {
+            path: file.path,
+            type: file.type,
+            stats: {
               size: file.stats.size,
-              size_human: formatBytes(file.stats.size),
-              timestamp: file.stats.mtime,
-              lastUpdated: new Date(),
-              has_thumb: false,
-              thumb_pending: true,
-              thumb_attempts: 0
-            };
+              modified: file.stats.mtime
+            }
+          });
 
-            logger.debug('Upserting media document:', mediaDoc);
+          const hash = generateFileHash(file.path);
+          
+          const mediaDoc = {
+            sourceId: new ObjectId(sourceId),
+            path: file.path,
+            type: file.type,
+            hash,
+            size: file.stats.size,
+            size_human: formatBytes(file.stats.size),
+            timestamp: file.stats.mtime || file.stats.modified,
+            lastUpdated: new Date(),
+            has_thumb: false,
+            thumb_pending: true,
+            thumb_attempts: 0
+          };
 
-            await mediaCollection.updateOne(
-              { hash },
-              { $set: mediaDoc },
-              { upsert: true }
-            );
+          logger.debug('Upserting media document:', mediaDoc);
 
-            processedFiles++;
-            logger.debug(`Processed ${processedFiles}/${totalFiles} files`);
-          } catch (error) {
-            logger.error('Error processing file:', {
-              file: file.path,
-              error: error.message
-            });
-          }
+          await mediaCollection.updateOne(
+            { hash },
+            { $set: mediaDoc },
+            { upsert: true }
+          );
+
+          processedFiles++;
+          logger.debug(`Processed ${processedFiles}/${totalFiles} files`);
+        } catch (error) {
+          logger.error('Error processing file:', {
+            file: file.path,
+            error: error.message
+          });
         }
       }
 
