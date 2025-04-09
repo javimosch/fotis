@@ -28,6 +28,10 @@
 - admin
   - sources: Manage media sources
   - index: Control indexing operations
+  - thumbnails: Manage thumbnail generation
+    - status: Show generation status (--watch for live updates)
+    - history: View generation history with filters
+    - generate: Trigger thumbnail generation
 
 ## Development Guidelines
 - Use ora for progress spinners
@@ -50,3 +54,16 @@
 - ora: Spinners
 - conf: Configuration
 - inquirer: Interactive prompts
+
+## Example Commands
+
+```bash
+# Check thumbnail generation status
+fotis admin thumbnails status --watch
+
+# View thumbnail generation history
+fotis admin thumbnails history --status=failed --from=2024-01-01
+
+# Trigger thumbnail generation for a source
+fotis admin thumbnails generate --source-id=123
+```

@@ -147,28 +147,6 @@ class Indexer {
 
             const hash = generateFileHash(file.path);
             
-            let thumbnailInfo = null;
-            if (file.type === 'image') {
-              try {
-                logger.debug('Generating thumbnail for:', file.path);
-                const thumbPath = await this.thumbnailService.generateImageThumbnail(file.path, hash);
-                const thumbStats = await fs.stat(thumbPath);
-                thumbnailInfo = {
-                  path: thumbPath,
-                  size: thumbStats.size
-                };
-                logger.debug('Thumbnail generated:', {
-                  path: thumbPath,
-                  size: formatBytes(thumbStats.size)
-                });
-              } catch (thumbError) {
-                logger.error('Thumbnail generation failed:', {
-                  file: file.path,
-                  error: thumbError.message
-                });
-              }
-            }
-
             const mediaDoc = {
               sourceId: new ObjectId(sourceId),
               path: file.path,
@@ -177,14 +155,11 @@ class Indexer {
               size: file.stats.size,
               size_human: formatBytes(file.stats.size),
               timestamp: file.stats.mtime,
-              lastUpdated: new Date()
+              lastUpdated: new Date(),
+              has_thumb: false,
+              thumb_pending: true,
+              thumb_attempts: 0
             };
-
-            if (thumbnailInfo) {
-              mediaDoc.thumb_path = thumbnailInfo.path;
-              mediaDoc.thumb_size = thumbnailInfo.size;
-              mediaDoc.thumb_size_human = formatBytes(thumbnailInfo.size);
-            }
 
             logger.debug('Upserting media document:', mediaDoc);
 

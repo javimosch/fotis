@@ -2,16 +2,16 @@ require('dotenv').config();
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const Indexer = require('./services/indexer');
+const ThumbnailGenerationService = require('./services/thumbnailGenerator');
 
-const app = express();
-const port = process.env.PORT || 3001;
-
-// Middleware
-app.use(express.json());
-
-// Connect to MongoDB and start server
-async function startServer() {
+const startServer = async () => {
   try {
+    const app = express();
+    const port = process.env.PORT || 3001;
+
+    // Add JSON body parsing middleware
+    app.use(express.json());
+
     console.log('Connecting to MongoDB...');
     const client = await MongoClient.connect(process.env.MONGO_URI);
     console.log('Connected to MongoDB');
@@ -22,6 +22,11 @@ async function startServer() {
     // Create and attach indexer instance
     app.locals.indexer = new Indexer(db);
 
+    // Initialize thumbnail generator
+    const thumbnailGenerator = new ThumbnailGenerationService(db);
+    await thumbnailGenerator.start();
+    app.locals.thumbnailGenerator = thumbnailGenerator;
+
     // Routes
     app.use('/media', require('./routes/media'));
     app.use('/admin', require('./routes/admin'));
@@ -29,7 +34,7 @@ async function startServer() {
     // Basic error handler
     app.use((err, req, res, next) => {
       console.error(err.stack);
-      res.status(500).json({ error: 'Something went wrong!' });
+      res.status(500).json({ error: err.message || 'Something went wrong!' });
     });
     
     app.listen(port, () => {
@@ -39,6 +44,8 @@ async function startServer() {
     console.error('Failed to connect to MongoDB:', err);
     process.exit(1);
   }
-}
+};
 
 startServer();
+
+module.exports = { startServer };

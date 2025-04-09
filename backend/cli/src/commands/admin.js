@@ -146,7 +146,8 @@ export function adminCommands(program) {
     .action(async (options) => {
       const spinner = ora('Starting indexing...').start();
       try {
-        await api.startIndexing(options.sourceId);
+        const sourceId = options.sourceId;
+        await api.startIndexing(sourceId);
         spinner.succeed('Indexing started');
       } catch (error) {
         spinner.fail('Failed to start indexing');
@@ -244,4 +245,135 @@ export function adminCommands(program) {
         process.exit(1);
       }
     });
+
+  // New thumbnail generation commands
+  const thumbnails = admin.command('thumbnails')
+    .description('Manage thumbnail generation');
+
+  thumbnails
+    .command('status')
+    .description('Show current thumbnail generation status')
+    .option('--watch', 'Watch for status changes')
+    .action(async (options) => {
+      const checkStatus = async () => {
+        try {
+          const status = await api.getThumbnailStatus();
+          if (program.opts().json) {
+            console.log(JSON.stringify(status, null, 2));
+          } else {
+            console.clear();
+            console.log(chalk.bold('\nThumbnail Generation Status:'));
+            console.log(chalk.cyan(`• Currently Generating: ${status.isGenerating}`));
+            console.log(`• Pending Count: ${status.pendingCount}`);
+            console.log(`• Failed Count: ${status.failedCount}`);
+            console.log(`• CPU Usage: ${status.cpuUsage.toFixed(1)}%`);
+            console.log(`• CPU Throttling: ${status.cooldownActive ? 'Active' : 'Inactive'}`);
+            if (status.lastRunTime) {
+              console.log(`• Last Run: ${new Date(status.lastRunTime).toLocaleString()}`);
+            }
+          }
+          return status.isGenerating;
+        } catch (error) {
+          logError(error, 'Thumbnail Status Command');
+          if (program.opts().debug) {
+            console.error(error);
+          }
+          process.exit(1);
+        }
+      };
+
+      if (options.watch) {
+        console.log(chalk.yellow('Watching thumbnail generation status (Ctrl+C to stop)...'));
+        while (true) {
+          await checkStatus();
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } else {
+        await checkStatus();
+      }
+    });
+
+  thumbnails
+    .command('history')
+    .description('Show thumbnail generation history')
+    .option('--source-id <id>', 'Filter by source ID')
+    .option('--status <status>', 'Filter by status (success/failed)')
+    .option('--from <date>', 'Start date (YYYY-MM-DD)')
+    .option('--to <date>', 'End date (YYYY-MM-DD)')
+    .action(async (options) => {
+      const spinner = ora('Fetching thumbnail generation history...').start();
+      try {
+        const history = await api.getThumbnailHistory({
+          sourceId: options.sourceId,
+          status: options.status,
+          from: options.from,
+          to: options.to
+        });
+        spinner.stop();
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(history, null, 2));
+        } else {
+          console.log(chalk.bold('\nThumbnail Generation History:'));
+          if (history.length === 0) {
+            console.log(chalk.yellow('\nNo thumbnail generation history found.'));
+          } else {
+            history.forEach(entry => {
+              const statusColor = entry.status === 'success' ? chalk.green : chalk.red;
+              console.log(chalk.cyan(`\n• ${new Date(entry.timestamp).toLocaleString()}`));
+              console.log(`  Status: ${statusColor(entry.status)}`);
+              console.log(`  Duration: ${entry.duration}ms`);
+              console.log(`  Input Size: ${formatBytes(entry.input_size)}`);
+              if (entry.status === 'success') {
+                console.log(`  Output Size: ${formatBytes(entry.output_size)}`);
+              }
+              console.log(`  Attempt: ${entry.attempt}`);
+              if (entry.error) {
+                console.log(chalk.red(`  Error: ${entry.error}`));
+              }
+            });
+          }
+        }
+      } catch (error) {
+        spinner.fail('Failed to fetch thumbnail history');
+        logError(error, 'Thumbnail History Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
+  thumbnails
+    .command('generate')
+    .description('Trigger thumbnail generation')
+    .option('--source-id <id>', 'Generate thumbnails for specific source')
+    .action(async (options) => {
+      const spinner = ora('Triggering thumbnail generation...').start();
+      try {
+        await api.triggerThumbnailGeneration(options.sourceId);
+        spinner.succeed('Thumbnail generation triggered successfully');
+      } catch (error) {
+        spinner.fail('Failed to trigger thumbnail generation');
+        logError(error, 'Thumbnail Generation Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
+  // Helper function to format bytes (copied from backend utils)
+  function formatBytes(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = bytes;
+    let unitIndex = 0;
+    
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    
+    return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
+  }
 }

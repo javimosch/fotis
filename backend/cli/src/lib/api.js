@@ -2,7 +2,10 @@ import axios from 'axios';
 import { getApiUrl } from './config.js';
 
 const api = axios.create({
-  baseURL: getApiUrl()
+  baseURL: getApiUrl(),
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
 
 export async function listMedia({ offset, limit, year, month }) {
@@ -43,5 +46,20 @@ export async function getIndexingStatus(sourceId) {
 
 export async function getIndexingHistory(sourceId) {
   const response = await api.get('/admin/index/history', { params: { sourceId } });
+  return response.data;
+}
+
+export async function getThumbnailStatus() {
+  const response = await api.get('/admin/thumbnails/status');
+  return response.data;
+}
+
+export async function getThumbnailHistory(params = {}) {
+  const response = await api.get('/admin/thumbnails/history', { params });
+  return response.data;
+}
+
+export async function triggerThumbnailGeneration(sourceId = null) {
+  const response = await api.post('/admin/thumbnails/generate', { sourceId });
   return response.data;
 }
