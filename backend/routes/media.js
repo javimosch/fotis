@@ -79,13 +79,25 @@ router.get('/thumb/:hash', async (req, res, next) => {
 
     logger.debug('Found media:', {
       path: media.path,
-      type: media.type
+      type: media.type,
+      thumb_path: media.thumb_path
     });
 
-    // For now, serve the original file since thumbnails aren't generated yet
-    // TODO: Serve actual thumbnail once implemented
+    // If we have a thumbnail, serve it
+    if (media.thumb_path) {
+      const thumbPath = path.resolve(media.thumb_path);
+      logger.debug('Serving thumbnail from:', thumbPath);
+      return res.sendFile(thumbPath, (err) => {
+        if (err) {
+          logger.error('Error sending thumbnail:', err);
+          next(err);
+        }
+      });
+    }
+
+    // Otherwise serve the original file
     const absolutePath = path.resolve(media.path);
-    logger.debug('Serving file from:', absolutePath);
+    logger.debug('Serving original file from:', absolutePath);
 
     res.sendFile(absolutePath, (err) => {
       if (err) {

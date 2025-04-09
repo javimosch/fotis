@@ -31,6 +31,10 @@ export function mediaCommands(program) {
             console.log(chalk.cyan(`\n• Hash: ${item.hash}`));
             console.log(`  Path: ${item.path}`);
             console.log(`  Type: ${item.type}`);
+            console.log(`  Size: ${item.size_human}`);
+            if (item.thumb_size_human) {
+              console.log(`  Thumbnail Size: ${item.thumb_size_human}`);
+            }
             console.log(`  Date: ${new Date(item.timestamp).toLocaleString()}`);
           });
         }

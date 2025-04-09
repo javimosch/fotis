@@ -21,8 +21,23 @@ function isVideo(filePath) {
   return ['.mp4', '.mov', '.avi', '.mkv'].includes(ext);
 }
 
+// Convert bytes to human readable size
+function formatBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = bytes;
+  let unitIndex = 0;
+  
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  
+  return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
+}
+
 module.exports = {
   generateFileHash,
   isImage,
-  isVideo
+  isVideo,
+  formatBytes
 };

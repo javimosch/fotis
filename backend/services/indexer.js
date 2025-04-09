@@ -3,12 +3,14 @@ const { ObjectId } = require('mongodb');
 const logger = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
-const { isImage, isVideo, generateFileHash } = require('../utils/fileUtils');
+const { isImage, isVideo, generateFileHash, formatBytes } = require('../utils/fileUtils');
+const ThumbnailService = require('./thumbnails');
 
 class Indexer {
   constructor(db) {
     this.db = db;
     this.isIndexing = false;
+    this.thumbnailService = new ThumbnailService();
   }
 
   async scanDirectory(dirPath) {
@@ -89,7 +91,8 @@ class Indexer {
     let processedFiles = 0;
 
     try {
-      // Get source configuration
+      await this.thumbnailService.ensureCacheDir();
+
       logger.debug('Fetching source configuration');
       const source = await this.db.collection('sources').findOne({ 
         _id: new ObjectId(sourceId) 
@@ -109,7 +112,6 @@ class Indexer {
         logger.debug('Processing local source');
         const sourcePath = source.config.path;
         
-        // Check if path exists
         try {
           const pathStats = await fs.stat(sourcePath);
           logger.debug('Source path stats:', {
@@ -127,12 +129,10 @@ class Indexer {
           throw new Error(`Invalid source path: ${error.message}`);
         }
 
-        // Scan for media files
         const files = await this.scanDirectory(sourcePath);
         totalFiles = files.length;
         logger.debug(`Found ${totalFiles} total media files`);
 
-        // Process each file
         const mediaCollection = this.db.collection('media');
         for (const file of files) {
           try {
@@ -145,32 +145,56 @@ class Indexer {
               }
             });
 
-            // Generate hash for the file
             const hash = generateFileHash(file.path);
             
-            // Create or update media entry
+            let thumbnailInfo = null;
+            if (file.type === 'image') {
+              try {
+                logger.debug('Generating thumbnail for:', file.path);
+                const thumbPath = await this.thumbnailService.generateImageThumbnail(file.path, hash);
+                const thumbStats = await fs.stat(thumbPath);
+                thumbnailInfo = {
+                  path: thumbPath,
+                  size: thumbStats.size
+                };
+                logger.debug('Thumbnail generated:', {
+                  path: thumbPath,
+                  size: formatBytes(thumbStats.size)
+                });
+              } catch (thumbError) {
+                logger.error('Thumbnail generation failed:', {
+                  file: file.path,
+                  error: thumbError.message
+                });
+              }
+            }
+
             const mediaDoc = {
               sourceId: new ObjectId(sourceId),
               path: file.path,
               type: file.type,
               hash,
               size: file.stats.size,
+              size_human: formatBytes(file.stats.size),
               timestamp: file.stats.mtime,
               lastUpdated: new Date()
             };
 
+            if (thumbnailInfo) {
+              mediaDoc.thumb_path = thumbnailInfo.path;
+              mediaDoc.thumb_size = thumbnailInfo.size;
+              mediaDoc.thumb_size_human = formatBytes(thumbnailInfo.size);
+            }
+
             logger.debug('Upserting media document:', mediaDoc);
 
-            // Use upsert to avoid duplicates
             await mediaCollection.updateOne(
               { hash },
               { $set: mediaDoc },
               { upsert: true }
             );
 
-            // TODO: Generate thumbnails
             processedFiles++;
-            
             logger.debug(`Processed ${processedFiles}/${totalFiles} files`);
           } catch (error) {
             logger.error('Error processing file:', {
@@ -181,7 +205,6 @@ class Indexer {
         }
       }
 
-      // Store indexing history
       logger.debug('Storing indexing history', {
         totalFiles,
         processedFiles
@@ -202,7 +225,6 @@ class Indexer {
         stack: error.stack
       });
       
-      // Store failed indexing attempt
       await this.db.collection('indexing_history').insertOne({
         sourceId: new ObjectId(sourceId),
         timestamp: new Date(),
@@ -228,7 +250,7 @@ class Indexer {
       isIndexing: this.isIndexing,
       totalFiles,
       processedFiles: totalFiles,
-      lastIndexed: null // TODO: Get from history
+      lastIndexed: null
     };
   }
 
