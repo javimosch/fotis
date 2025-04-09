@@ -3,7 +3,7 @@ const { ObjectId } = require('mongodb');
 const logger = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
-const { isImage, isVideo } = require('../utils/fileUtils');
+const { isImage, isVideo, generateFileHash } = require('../utils/fileUtils');
 
 class Indexer {
   constructor(db) {
@@ -133,6 +133,7 @@ class Indexer {
         logger.debug(`Found ${totalFiles} total media files`);
 
         // Process each file
+        const mediaCollection = this.db.collection('media');
         for (const file of files) {
           try {
             logger.debug('Processing file:', {
@@ -144,8 +145,33 @@ class Indexer {
               }
             });
 
-            // TODO: Generate thumbnails and update database
+            // Generate hash for the file
+            const hash = generateFileHash(file.path);
+            
+            // Create or update media entry
+            const mediaDoc = {
+              sourceId: new ObjectId(sourceId),
+              path: file.path,
+              type: file.type,
+              hash,
+              size: file.stats.size,
+              timestamp: file.stats.mtime,
+              lastUpdated: new Date()
+            };
+
+            logger.debug('Upserting media document:', mediaDoc);
+
+            // Use upsert to avoid duplicates
+            await mediaCollection.updateOne(
+              { hash },
+              { $set: mediaDoc },
+              { upsert: true }
+            );
+
+            // TODO: Generate thumbnails
             processedFiles++;
+            
+            logger.debug(`Processed ${processedFiles}/${totalFiles} files`);
           } catch (error) {
             logger.error('Error processing file:', {
               file: file.path,
@@ -194,12 +220,15 @@ class Indexer {
 
   async getStatus(sourceId) {
     logger.debug('Getting status for sourceId:', sourceId);
-    // TODO: Implement status checking
+    const totalFiles = await this.db.collection('media').countDocuments({
+      sourceId: new ObjectId(sourceId)
+    });
+    
     return {
       isIndexing: this.isIndexing,
-      totalFiles: 0,
-      processedFiles: 0,
-      lastIndexed: null
+      totalFiles,
+      processedFiles: totalFiles,
+      lastIndexed: null // TODO: Get from history
     };
   }
 
