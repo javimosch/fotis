@@ -1,0 +1,20 @@
+{
+  "name": "fotis-poc-backend",
+  "version": "1.0.0",
+  "description": "Backend for Fotis POC - A Google Photos-style media viewer",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongodb": "^6.3.0",
+    "sharp": "^0.33.2",
+    "ssh2-sftp-client": "^9.1.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
