@@ -24,7 +24,8 @@ export function adminCommands(program) {
         } else {
           console.log(chalk.bold('\nConfigured sources:'));
           result.forEach(source => {
-            console.log(chalk.cyan(`\n• Type: ${source.type}`));
+            console.log(chalk.cyan(`\n• Source ID: ${source._id}`));
+            console.log(`  Type: ${source.type}`);
             console.log(`  Created: ${new Date(source.createdAt).toLocaleString()}`);
             console.log(`  Config: ${JSON.stringify(source.config, null, 2)}`);
           });
@@ -115,6 +116,8 @@ export function adminCommands(program) {
           spinner.succeed('Source added successfully');
           if (program.opts().json) {
             console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(chalk.cyan(`\nSource ID: ${result.insertedId}`));
           }
         } catch (error) {
           spinner.fail('Failed to add source');
