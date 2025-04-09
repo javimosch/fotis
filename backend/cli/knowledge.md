@@ -26,7 +26,15 @@
   - list: Paginated media listing
   - thumb: Download thumbnails
 - admin
-  - sources: Manage media sources
+  - sources
+    - list: List all configured sources
+    - add: Add new source
+      - --type: Source type (local or sftp)
+      - --path: Path to media files
+      - --host: SFTP host (for sftp type)
+      - --port: SFTP port (default: 22, for sftp type)
+      - --user: SFTP username (for sftp type)
+      - --pass: SFTP password (for sftp type)
   - index: Control indexing operations
   - thumbnails: Manage thumbnail generation
     - status: Show generation status (--watch for live updates)
@@ -58,6 +66,12 @@
 ## Example Commands
 
 ```bash
+# Add local source
+fotis admin sources add --type=local --path=/path/to/photos
+
+# Add SFTP source with custom port
+fotis admin sources add --type=sftp --host=sftp.example.com --port=2222 --user=username --pass=password --path=/remote/photos
+
 # Check thumbnail generation status
 fotis admin thumbnails status --watch
 

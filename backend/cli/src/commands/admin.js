@@ -46,6 +46,7 @@ export function adminCommands(program) {
     .option('--type <type>', 'Source type (local or sftp)')
     .option('--path <path>', 'Path to media files')
     .option('--host <host>', 'SFTP host')
+    .option('--port <port>', 'SFTP port (default: 22)')
     .option('--user <username>', 'SFTP username')
     .option('--pass <password>', 'SFTP password')
     .action(async (options) => {
@@ -73,13 +74,27 @@ export function adminCommands(program) {
           }
           config = { path: options.path };
         } else if (options.type === 'sftp') {
-          if (!options.host || !options.user || !options.pass || !options.path) {
+          if (!options.host || !options.user || !options.pass || !options.path || !options.port) {
             const answers = await inquirer.prompt([
               {
                 type: 'input',
                 name: 'host',
                 message: 'Enter SFTP host:',
                 when: !options.host
+              },
+              {
+                type: 'input',
+                name: 'port',
+                message: 'Enter SFTP port:',
+                default: '22',
+                when: !options.port,
+                validate: (value) => {
+                  const port = parseInt(value);
+                  if (isNaN(port) || port < 1 || port > 65535) {
+                    return 'Please enter a valid port number (1-65535)';
+                  }
+                  return true;
+                }
               },
               {
                 type: 'input',
@@ -104,6 +119,7 @@ export function adminCommands(program) {
           }
           config = {
             host: options.host,
+            port: parseInt(options.port || '22'),
             user: options.user,
             pass: options.pass,
             path: options.path
@@ -118,6 +134,18 @@ export function adminCommands(program) {
             console.log(JSON.stringify(result, null, 2));
           } else {
             console.log(chalk.cyan(`\nSource ID: ${result.insertedId}`));
+            
+            // Show the complete configuration
+            console.log(chalk.bold('\nSource Configuration:'));
+            console.log(`Type: ${options.type}`);
+            if (options.type === 'local') {
+              console.log(`Path: ${config.path}`);
+            } else {
+              console.log(`Host: ${config.host}`);
+              console.log(`Port: ${config.port}`);
+              console.log(`Username: ${config.user}`);
+              console.log(`Remote Path: ${config.path}`);
+            }
           }
         } catch (error) {
           spinner.fail('Failed to add source');

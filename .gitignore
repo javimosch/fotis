@@ -4,3 +4,9 @@ node_modules
 mongo-data
 cache
 backend/cache
+
+# Frontend specific ignores
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/.env.local
