@@ -4,10 +4,25 @@ import inquirer from 'inquirer';
 import * as api from '../lib/api.js';
 import { logError } from '../utils/logger.js';
 
+// Helper function to format bytes (copied from backend utils - keep it DRY later if possible)
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined || isNaN(bytes)) return 'N/A';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = bytes;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+
+  return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
+}
+
 export function adminCommands(program) {
   const admin = program.command('admin');
 
-  // Sources management
+  // --- Sources management ---
   const sources = admin.command('sources');
 
   sources
@@ -18,16 +33,26 @@ export function adminCommands(program) {
       try {
         const result = await api.listSources();
         spinner.stop();
-        
+
         if (program.opts().json) {
           console.log(JSON.stringify(result, null, 2));
         } else {
           console.log(chalk.bold('\nConfigured sources:'));
+          if (result.length === 0) {
+             console.log(chalk.yellow('No sources configured yet.'));
+             return;
+          }
           result.forEach(source => {
             console.log(chalk.cyan(`\n• Source ID: ${source._id}`));
             console.log(`  Type: ${source.type}`);
             console.log(`  Created: ${new Date(source.createdAt).toLocaleString()}`);
-            console.log(`  Config: ${JSON.stringify(source.config, null, 2)}`);
+            // Display config nicely
+            console.log(`  Config:`);
+            for (const [key, value] of Object.entries(source.config)) {
+              // Mask password
+              const displayValue = key === 'pass' ? '********' : value;
+              console.log(`    ${key}: ${displayValue}`);
+            }
           });
         }
       } catch (error) {
@@ -44,107 +69,83 @@ export function adminCommands(program) {
     .command('add')
     .description('Add a new source')
     .option('--type <type>', 'Source type (local or sftp)')
-    .option('--path <path>', 'Path to media files')
+    .option('--path <path>', 'Path to media files (local or remote)')
     .option('--host <host>', 'SFTP host')
     .option('--port <port>', 'SFTP port (default: 22)')
     .option('--user <username>', 'SFTP username')
     .option('--pass <password>', 'SFTP password')
     .action(async (options) => {
       let config;
-      
+      let type = options.type;
+
       try {
-        if (!options.type) {
+        if (!type) {
           const answer = await inquirer.prompt([{
             type: 'list',
             name: 'type',
             message: 'Select source type:',
             choices: ['local', 'sftp']
           }]);
-          options.type = answer.type;
+          type = answer.type;
         }
 
-        if (options.type === 'local') {
-          if (!options.path) {
+        if (type === 'local') {
+          let path = options.path;
+          if (!path) {
             const answer = await inquirer.prompt([{
               type: 'input',
               name: 'path',
               message: 'Enter local path:'
             }]);
-            options.path = answer.path;
+            path = answer.path;
           }
-          config = { path: options.path };
-        } else if (options.type === 'sftp') {
-          if (!options.host || !options.user || !options.pass || !options.path || !options.port) {
-            const answers = await inquirer.prompt([
-              {
-                type: 'input',
-                name: 'host',
-                message: 'Enter SFTP host:',
-                when: !options.host
-              },
-              {
-                type: 'input',
-                name: 'port',
-                message: 'Enter SFTP port:',
-                default: '22',
-                when: !options.port,
-                validate: (value) => {
-                  const port = parseInt(value);
-                  if (isNaN(port) || port < 1 || port > 65535) {
-                    return 'Please enter a valid port number (1-65535)';
-                  }
-                  return true;
-                }
-              },
-              {
-                type: 'input',
-                name: 'user',
-                message: 'Enter SFTP username:',
-                when: !options.user
-              },
-              {
-                type: 'password',
-                name: 'pass',
-                message: 'Enter SFTP password:',
-                when: !options.pass
-              },
-              {
-                type: 'input',
-                name: 'path',
-                message: 'Enter remote path:',
-                when: !options.path
-              }
-            ]);
-            Object.assign(options, answers);
+          if (!path) {
+             console.error(chalk.red('Error: Local path is required.'));
+             process.exit(1);
+          }
+          config = { path: path };
+        } else if (type === 'sftp') {
+          const questions = [
+            { type: 'input', name: 'host', message: 'Enter SFTP host:', when: !options.host },
+            { type: 'input', name: 'port', message: 'Enter SFTP port:', default: '22', when: !options.port,
+              validate: (value) => /^\d+$/.test(value) && parseInt(value) > 0 && parseInt(value) < 65536 || 'Invalid port number' },
+            { type: 'input', name: 'user', message: 'Enter SFTP username:', when: !options.user },
+            { type: 'password', name: 'pass', message: 'Enter SFTP password:', mask: '*', when: !options.pass },
+            { type: 'input', name: 'path', message: 'Enter remote path:', when: !options.path }
+          ];
+          const answers = await inquirer.prompt(questions.filter(q => q.when !== false)); // Only ask if not provided
+          // Merge provided options and answers
+          const sftpOpts = { ...options, ...answers };
+
+          if (!sftpOpts.host || !sftpOpts.user || !sftpOpts.pass || !sftpOpts.path) {
+             console.error(chalk.red('Error: SFTP requires host, user, password, and path.'));
+             process.exit(1);
           }
           config = {
-            host: options.host,
-            port: parseInt(options.port || '22'),
-            user: options.user,
-            pass: options.pass,
-            path: options.path
+            host: sftpOpts.host,
+            port: parseInt(sftpOpts.port || '22'),
+            user: sftpOpts.user,
+            pass: sftpOpts.pass,
+            path: sftpOpts.path
           };
+        } else {
+           console.error(chalk.red(`Error: Invalid source type '${type}'. Use 'local' or 'sftp'.`));
+           process.exit(1);
         }
 
         const spinner = ora('Adding source...').start();
         try {
-          const result = await api.addSource(options.type, config);
+          const result = await api.addSource(type, config);
           spinner.succeed('Source added successfully');
           if (program.opts().json) {
             console.log(JSON.stringify(result, null, 2));
           } else {
-            console.log(chalk.cyan(`\nSource ID: ${result.insertedId}`));
-            
-            // Show the complete configuration
+            console.log(chalk.cyan(`\nSource ID: ${result._id}`)); // Use _id from returned object
             console.log(chalk.bold('\nSource Configuration:'));
-            console.log(`Type: ${options.type}`);
-            if (options.type === 'local') {
-              console.log(`Path: ${config.path}`);
-            } else {
-              console.log(`Host: ${config.host}`);
-              console.log(`Port: ${config.port}`);
-              console.log(`Username: ${config.user}`);
-              console.log(`Remote Path: ${config.path}`);
+            console.log(`Type: ${result.type}`);
+            for (const [key, value] of Object.entries(result.config)) {
+              const displayValue = key === 'pass' ? '********' : value;
+              console.log(`  ${key}: ${displayValue}`);
             }
           }
         } catch (error) {
@@ -156,6 +157,7 @@ export function adminCommands(program) {
           process.exit(1);
         }
       } catch (error) {
+        // Catch errors from inquirer or validation
         logError(error, 'Add Source Command Error');
         if (program.opts().debug) {
           console.error(error);
@@ -164,7 +166,7 @@ export function adminCommands(program) {
       }
     });
 
-  // Indexing commands
+  // --- Indexing commands ---
   const indexing = admin.command('index');
 
   indexing
@@ -172,11 +174,11 @@ export function adminCommands(program) {
     .description('Start indexing for a source')
     .requiredOption('--source-id <id>', 'Source ID to index')
     .action(async (options) => {
-      const spinner = ora('Starting indexing...').start();
+      const spinner = ora('Requesting indexing start...').start();
       try {
         const sourceId = options.sourceId;
-        await api.startIndexing(sourceId);
-        spinner.succeed('Indexing started');
+        const result = await api.startIndexing(sourceId);
+        spinner.succeed(`Indexing requested for source ${sourceId}. Status: ${result.message}`);
       } catch (error) {
         spinner.fail('Failed to start indexing');
         logError(error, 'Start Indexing Command');
@@ -189,46 +191,67 @@ export function adminCommands(program) {
 
   indexing
     .command('status')
-    .description('Get indexing status')
+    .description('Get indexing status for a source')
     .requiredOption('--source-id <id>', 'Source ID to check')
-    .option('--watch', 'Watch for status changes')
+    .option('--watch', 'Watch for status changes (updates every 5s)')
     .action(async (options) => {
+      const sourceId = options.sourceId;
+      let isWatching = options.watch;
+      let spinner;
+
       const checkStatus = async () => {
         try {
-          const status = await api.getIndexingStatus(options.sourceId);
+          if (!isWatching && !spinner) spinner = ora(`Fetching status for source ${sourceId}...`).start();
+          const status = await api.getIndexingStatus(sourceId);
+          if (spinner) spinner.stop();
+
           if (program.opts().json) {
             console.log(JSON.stringify(status, null, 2));
           } else {
-            console.clear();
-            console.log(chalk.bold('\nIndexing Status:'));
-            console.log(chalk.cyan(`• Is Indexing: ${status.isIndexing}`));
-            console.log(`• Total Files: ${status.totalFiles}`);
-            console.log(`• Processed: ${status.processedFiles}`);
+            if (isWatching) console.clear(); // Clear screen in watch mode
+            console.log(chalk.bold(`\nIndexing Status (Source: ${sourceId}):`));
+            console.log(chalk.cyan(`• Is Indexing: ${status.isIndexing ? 'Yes' : 'No'}`));
+            console.log(`• Total Files in DB: ${status.totalFiles}`);
+            console.log(`• Last Run Processed: ${status.processedFiles ?? 'N/A'}`);
             if (status.lastIndexed) {
-              console.log(`• Last Indexed: ${new Date(status.lastIndexed).toLocaleString()}`);
+              console.log(`• Last Run Started: ${new Date(status.lastIndexed).toLocaleString()}`);
+              console.log(`• Last Run Status: ${status.lastStatus || 'unknown'}`);
+              if (status.lastDurationMs) console.log(`• Last Run Duration: ${status.lastDurationMs}ms`);
+              if (status.lastError) console.log(chalk.red(`• Last Run Error: ${status.lastError}`));
+            } else {
+              console.log(chalk.yellow('• No indexing history found for this source.'));
             }
           }
+          // Return true if still indexing, false otherwise (for watch loop)
           return status.isIndexing;
         } catch (error) {
-          logError(error, 'Check Status Command');
+          if (spinner) spinner.fail('Failed to fetch status');
+          else console.error(chalk.red('Error fetching status.'));
+          logError(error, 'Check Indexing Status Command');
           if (program.opts().debug) {
             console.error(error);
           }
-          process.exit(1);
+          // Stop watching on error
+          if (isWatching) throw error; // Re-throw to exit watch loop
+          else process.exit(1);
         }
       };
 
-      if (options.watch) {
-        console.log(chalk.yellow('Watching for status changes (Ctrl+C to stop)...'));
+      if (isWatching) {
+        console.log(chalk.yellow(`Watching indexing status for source ${sourceId} (Ctrl+C to stop)...`));
         try {
-          while (await checkStatus()) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          let stillIndexing = true;
+          while (stillIndexing) {
+            stillIndexing = await checkStatus();
+            if (stillIndexing) {
+               await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+            } else {
+               console.log(chalk.green('\nIndexing finished.'));
+            }
           }
         } catch (error) {
-          logError(error, 'Watch Status Command');
-          if (program.opts().debug) {
-            console.error(error);
-          }
+          // Error already logged in checkStatus
+          console.error(chalk.red('Exiting watch mode due to error.'));
           process.exit(1);
         }
       } else {
@@ -249,15 +272,17 @@ export function adminCommands(program) {
         if (program.opts().json) {
           console.log(JSON.stringify(history, null, 2));
         } else {
-          console.log(chalk.bold('\nIndexing History:'));
+          console.log(chalk.bold(`\nIndexing History (Source: ${options.sourceId}):`));
           if (history.length === 0) {
             console.log(chalk.yellow('\nNo indexing history found for this source.'));
           } else {
             history.forEach(entry => {
-              console.log(chalk.cyan(`\n• ${new Date(entry.timestamp).toLocaleString()}`));
-              console.log(`  Status: ${entry.status}`);
-              console.log(`  Total Files: ${entry.totalFiles}`);
-              console.log(`  Processed: ${entry.processedFiles}`);
+              const statusColor = entry.status === 'completed' ? chalk.green : chalk.red;
+              console.log(chalk.cyan(`\n• Run Started: ${new Date(entry.timestamp).toLocaleString()}`));
+              console.log(`  Status: ${statusColor(entry.status)}`);
+              console.log(`  Duration: ${entry.durationMs}ms`);
+              console.log(`  Total Files Found: ${entry.totalFiles}`);
+              console.log(`  Files Processed: ${entry.processedFiles}`);
               if (entry.error) {
                 console.log(chalk.red(`  Error: ${entry.error}`));
               }
@@ -274,51 +299,72 @@ export function adminCommands(program) {
       }
     });
 
-  // New thumbnail generation commands
+  // --- Thumbnail generation commands ---
   const thumbnails = admin.command('thumbnails')
     .description('Manage thumbnail generation');
 
   thumbnails
     .command('status')
     .description('Show current thumbnail generation status')
-    .option('--watch', 'Watch for status changes')
+    .option('--watch', 'Watch for status changes (updates every 5s)')
     .action(async (options) => {
-      const checkStatus = async () => {
-        try {
-          const status = await api.getThumbnailStatus();
-          if (program.opts().json) {
-            console.log(JSON.stringify(status, null, 2));
-          } else {
-            console.clear();
-            console.log(chalk.bold('\nThumbnail Generation Status:'));
-            console.log(chalk.cyan(`• Currently Generating: ${status.isGenerating}`));
-            console.log(`• Pending Count: ${status.pendingCount}`);
-            console.log(`• Failed Count: ${status.failedCount}`);
-            console.log(`• CPU Usage: ${status.cpuUsage.toFixed(1)}%`);
-            console.log(`• CPU Throttling: ${status.cooldownActive ? 'Active' : 'Inactive'}`);
-            if (status.lastRunTime) {
-              console.log(`• Last Run: ${new Date(status.lastRunTime).toLocaleString()}`);
-            }
-          }
-          return status.isGenerating;
-        } catch (error) {
-          logError(error, 'Thumbnail Status Command');
-          if (program.opts().debug) {
-            console.error(error);
-          }
-          process.exit(1);
-        }
-      };
+       const isWatching = options.watch;
+       let spinner;
 
-      if (options.watch) {
-        console.log(chalk.yellow('Watching thumbnail generation status (Ctrl+C to stop)...'));
-        while (true) {
-          await checkStatus();
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      } else {
-        await checkStatus();
-      }
+       const checkStatus = async () => {
+         try {
+           if (!isWatching && !spinner) spinner = ora('Fetching thumbnail status...').start();
+           const status = await api.getThumbnailStatus();
+           if (spinner) spinner.stop();
+
+           if (program.opts().json) {
+             console.log(JSON.stringify(status, null, 2));
+           } else {
+             if (isWatching) console.clear();
+             console.log(chalk.bold('\nThumbnail Generation Status:'));
+             console.log(chalk.cyan(`• Currently Generating: ${status.isGenerating ? 'Yes' : 'No'}`));
+             console.log(`• Pending Count: ${status.pendingCount}`);
+             console.log(`• Failed Count (Max Attempts): ${status.failedCount}`);
+             console.log(`• CPU Usage: ${status.cpuUsage.toFixed(1)}%`);
+             console.log(`• CPU Throttling: ${status.cooldownActive ? chalk.yellow('Active') : 'Inactive'}`);
+             if (status.lastRunTime) {
+               console.log(`• Last Run Event: ${new Date(status.lastRunTime).toLocaleString()}`);
+             } else {
+               console.log(chalk.yellow('• No generation history found.'));
+             }
+           }
+           return status.isGenerating || status.pendingCount > 0; // Keep watching if generating or pending
+         } catch (error) {
+           if (spinner) spinner.fail('Failed to fetch status');
+           else console.error(chalk.red('Error fetching status.'));
+           logError(error, 'Thumbnail Status Command');
+           if (program.opts().debug) {
+             console.error(error);
+           }
+           if (isWatching) throw error;
+           else process.exit(1);
+         }
+       };
+
+       if (isWatching) {
+         console.log(chalk.yellow('Watching thumbnail generation status (Ctrl+C to stop)...'));
+         try {
+           let keepWatching = true;
+           while (keepWatching) {
+             keepWatching = await checkStatus();
+             if (keepWatching) {
+               await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+             } else {
+                console.log(chalk.green('\nGeneration idle and no pending items.'));
+             }
+           }
+         } catch (error) {
+           console.error(chalk.red('Exiting watch mode due to error.'));
+           process.exit(1);
+         }
+       } else {
+         await checkStatus();
+       }
     });
 
   thumbnails
@@ -344,11 +390,13 @@ export function adminCommands(program) {
         } else {
           console.log(chalk.bold('\nThumbnail Generation History:'));
           if (history.length === 0) {
-            console.log(chalk.yellow('\nNo thumbnail generation history found.'));
+            console.log(chalk.yellow('\nNo matching thumbnail generation history found.'));
           } else {
             history.forEach(entry => {
               const statusColor = entry.status === 'success' ? chalk.green : chalk.red;
               console.log(chalk.cyan(`\n• ${new Date(entry.timestamp).toLocaleString()}`));
+              console.log(`  Media ID: ${entry.mediaId}`);
+              console.log(`  Source ID: ${entry.sourceId}`);
               console.log(`  Status: ${statusColor(entry.status)}`);
               console.log(`  Duration: ${entry.duration}ms`);
               console.log(`  Input Size: ${formatBytes(entry.input_size)}`);
@@ -374,13 +422,13 @@ export function adminCommands(program) {
 
   thumbnails
     .command('generate')
-    .description('Trigger thumbnail generation')
-    .option('--source-id <id>', 'Generate thumbnails for specific source')
+    .description('Trigger thumbnail generation (marks pending and runs cycle)')
+    .option('--source-id <id>', 'Generate thumbnails only for a specific source')
     .action(async (options) => {
-      const spinner = ora('Triggering thumbnail generation...').start();
+      const spinner = ora('Requesting thumbnail generation...').start();
       try {
-        await api.triggerThumbnailGeneration(options.sourceId);
-        spinner.succeed('Thumbnail generation triggered successfully');
+        const result = await api.triggerThumbnailGeneration(options.sourceId);
+        spinner.succeed(`Thumbnail generation requested. Status: ${result.message}`);
       } catch (error) {
         spinner.fail('Failed to trigger thumbnail generation');
         logError(error, 'Thumbnail Generation Command');
@@ -391,17 +439,66 @@ export function adminCommands(program) {
       }
     });
 
-  // Helper function to format bytes (copied from backend utils)
-  function formatBytes(bytes) {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-    
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    
-    return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
-  }
+  // --- Deduplication commands ---
+  const dedupe = admin.command('dedupe')
+    .description('Manage media deduplication');
+
+  dedupe
+    .command('start')
+    .description('Start the deduplication cleanup process')
+    .action(async () => {
+      const spinner = ora('Requesting deduplication start...').start();
+      try {
+        const result = await api.startDeduplication();
+        spinner.succeed(`Deduplication process requested. Status: ${result.message}`);
+      } catch (error) {
+        spinner.fail('Failed to start deduplication');
+        logError(error, 'Start Deduplication Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
+  dedupe
+    .command('status')
+    .description('Show current deduplication status and last run info')
+    .action(async () => {
+      const spinner = ora('Fetching deduplication status...').start();
+      try {
+        const status = await api.getDeduplicationStatus();
+        spinner.stop();
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(status, null, 2));
+        } else {
+          console.log(chalk.bold('\nDeduplication Status:'));
+          console.log(chalk.cyan(`• Currently Cleaning: ${status.isCleaning ? 'Yes' : 'No'}`));
+          console.log(`• Last Run Status: ${status.status}`);
+          if (status.startTime) {
+            console.log(`• Last Run Started: ${new Date(status.startTime).toLocaleString()}`);
+          }
+          if (status.endTime) {
+            console.log(`• Last Run Ended: ${new Date(status.endTime).toLocaleString()}`);
+          }
+          if (status.startTime && status.endTime) {
+             const duration = (new Date(status.endTime) - new Date(status.startTime));
+             console.log(`• Last Run Duration: ${duration}ms`);
+          }
+          console.log(`• Hashes with Duplicates Found (Last Run): ${status.hashesProcessed}`);
+          console.log(`• Duplicates Removed (Last Run): ${status.duplicatesRemoved}`);
+          if (status.error) {
+            console.log(chalk.red(`• Last Run Error: ${status.error}`));
+          }
+        }
+      } catch (error) {
+        spinner.fail('Failed to fetch deduplication status');
+        logError(error, 'Deduplication Status Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
 }

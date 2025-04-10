@@ -4,6 +4,8 @@ const { MongoClient } = require('mongodb');
 const path = require('path');
 const Indexer = require('./services/indexer');
 const ThumbnailGenerationService = require('./services/thumbnailGenerator');
+const DeduplicationService = require('./services/deduplicationService');
+const logger = require('./utils/logger');
 
 const startServer = async () => {
   try {
@@ -16,13 +18,13 @@ const startServer = async () => {
     // Serve static files from public directory
     app.use(express.static(path.join(__dirname, 'public')));
 
-    console.log('Connecting to MongoDB...');
+    logger.info('Connecting to MongoDB...');
     const client = await MongoClient.connect(process.env.MONGO_URI);
-    console.log('Connected to MongoDB');
-    
+    logger.info('Connected to MongoDB');
+
     const db = client.db();
     app.locals.db = db;
-    
+
     // Create and attach indexer instance
     app.locals.indexer = new Indexer(db);
 
@@ -30,6 +32,10 @@ const startServer = async () => {
     const thumbnailGenerator = new ThumbnailGenerationService(db);
     await thumbnailGenerator.start();
     app.locals.thumbnailGenerator = thumbnailGenerator;
+
+    // Initialize Deduplication Service
+    const deduplicationService = new DeduplicationService(db);
+    app.locals.deduplicationService = deduplicationService;
 
     // Routes
     app.use('/media', require('./routes/media'));
@@ -42,19 +48,20 @@ const startServer = async () => {
 
     // Basic error handler
     app.use((err, req, res, next) => {
-      console.error(err.stack);
+      logger.error('Unhandled error:', err.stack);
       res.status(500).json({ error: err.message || 'Something went wrong!' });
     });
-    
+
     app.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}`);
+      logger.info(`Server running on http://localhost:${port}`);
     });
   } catch (err) {
-    console.error('Failed to connect to MongoDB:', err);
+    logger.error('Failed to start server:', err);
     process.exit(1);
   }
 };
 
 startServer();
 
-module.exports = { startServer };
+// No need to export startServer unless used for testing/programmatic start
+// module.exports = { startServer };
