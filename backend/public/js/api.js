@@ -3,19 +3,32 @@ export const api = {
     async getMedia({ year = null, offset = 0, limit = 50 } = {}) {
         const params = new URLSearchParams({ offset, limit });
         if (year) params.append('year', year);
-        
+
+        console.debug(`API: Fetching media with params: ${params.toString()}`); // Debug log
         const response = await fetch(`/media?${params}`);
-        if (!response.ok) throw new Error('Failed to fetch media');
-        return response.json();
+        if (!response.ok) {
+            console.error(`API Error: Failed to fetch media (${response.status})`, await response.text()); // Log error details
+            throw new Error(`Failed to fetch media: ${response.statusText}`);
+        }
+        const data = await response.json();
+        console.debug(`API: Received ${data.length} media items.`); // Debug log
+        return data;
     },
 
     async getYears() {
-        // For now, return static years - could be API-driven later
-        const currentYear = new Date().getFullYear();
-        return Array.from({ length: 5 }, (_, i) => currentYear - i);
+        console.debug("API: Fetching years with counts..."); // Debug log
+        const response = await fetch('/media/years'); // Use the new endpoint
+        if (!response.ok) {
+            console.error(`API Error: Failed to fetch years (${response.status})`, await response.text()); // Log error details
+            throw new Error(`Failed to fetch years: ${response.statusText}`);
+        }
+        const data = await response.json();
+        console.debug("API: Received years data:", data); // Debug log
+        // Returns array of { year: number, count: number }
+        return data;
     },
 
-    async getThumbnail(hash) {
+    async getThumbnailUrl(hash) { // Renamed for clarity, returns URL string
         return `/media/thumb/${hash}`;
     }
 };
