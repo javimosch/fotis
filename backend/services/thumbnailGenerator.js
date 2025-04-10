@@ -69,182 +69,185 @@ class ThumbnailGenerationService {
       return;
     }
 
-    console.debug('[DEBUG] Starting generatePendingThumbnails run.');
+    console.debug('[DEBUG] Starting generatePendingThumbnails FULL run.');
     this.isGenerating = true;
-    const startTime = Date.now();
-    let processedCount = 0;
-    let batchSuccessCount = 0; // Track success within this batch
-    let batchFailureCount = 0; // Track failure within this batch
+    const overallStartTime = Date.now();
+    let totalProcessedCount = 0;
+    let totalSuccessCount = 0;
+    let totalFailureCount = 0;
+    let batchNumber = 0;
 
     try {
-      // --- Add this block ---
-      const totalPendingBeforeBatch = await this.db.collection('media').countDocuments({
-        has_thumb: false,
-        thumb_pending: true,
-        thumb_attempts: { $lt: this.maxAttempts }
-      });
-      console.debug(`[DEBUG] Total pending items BEFORE fetching batch: ${totalPendingBeforeBatch}`);
-      // --- End of added block ---
+      while (true) {
+        batchNumber++;
+        const batchStartTime = Date.now();
+        let batchProcessedCount = 0;
+        let batchSuccessCount = 0;
+        let batchFailureCount = 0;
 
-      // Get batch of pending thumbnails
-      console.debug(`[DEBUG] Fetching batch of ${this.batchSize} pending thumbnails (attempts < ${this.maxAttempts}).`);
-      const batch = await this.db.collection('media').find({
-        has_thumb: false,
-        thumb_pending: true,
-        thumb_attempts: { $lt: this.maxAttempts }
-      }).limit(this.batchSize).toArray();
+        const totalPendingBeforeBatch = await this.db.collection('media').countDocuments({
+          has_thumb: false,
+          thumb_pending: true,
+          thumb_attempts: { $lt: this.maxAttempts }
+        });
+        console.debug(`[DEBUG] Batch #${batchNumber}: Total pending items BEFORE fetching batch: ${totalPendingBeforeBatch}`);
 
-      logger.debug(`Processing ${batch.length} pending thumbnails`);
-      console.debug(`[DEBUG] Found ${batch.length} items in batch:`, batch.map(m => ({ id: m._id, path: m.path, attempts: m.thumb_attempts })));
-
-      if (batch.length === 0) {
-         console.debug('[DEBUG] No pending thumbnails found in this batch.');
-      }
-
-      for (const media of batch) {
-        processedCount++;
-        const genStartTime = Date.now();
-        console.debug(`[DEBUG] Processing item ${processedCount}/${batch.length}: ${media._id} (${media.path})`);
-
-        try {
-          // Check CPU usage and apply throttling if needed
-          const cpuUsage = await this.getCPUUsage();
-          let cooldownTime = this.cpuCooldown;
-
-          if (cpuUsage > this.cpuUsageLimit) {
-             cooldownTime = this.cpuCooldown * this.throttleMultiplier;
-             logger.debug(`CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
-             console.debug(`[DEBUG] CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
-          } else {
-             console.debug(`[DEBUG] CPU usage OK (${cpuUsage.toFixed(1)}%), using base cooldown ${cooldownTime}ms`);
-          }
-
-          // Generate thumbnail
-          let thumbPath, thumbStats;
-          console.debug(`[DEBUG] Attempting thumbnail generation for type: ${media.type}`);
-          if (media.type === 'image') {
-            thumbPath = await this.thumbnailService.generateImageThumbnail(media.path, media.hash);
-            thumbStats = await fs.stat(thumbPath);
-            console.debug(`[DEBUG] Image thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
-          } else if (media.type === 'video') {
-            thumbPath = await this.thumbnailService.generateVideoThumbnail(media.path, media.hash);
-            thumbStats = await fs.stat(thumbPath);
-            console.debug(`[DEBUG] Video thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
-          } else {
-             console.warn(`[WARN] Unsupported media type for thumbnail generation: ${media.type} for ${media._id}`);
-             throw new Error(`Unsupported media type: ${media.type}`);
-          }
-
-          // Prepare update data for success
-          const updateData = {
-            $set: {
-              has_thumb: true,
-              thumb_pending: false,
-              thumb_path: thumbPath,
-              thumb_size: thumbStats.size,
-              thumb_size_human: formatBytes(thumbStats.size)
-            },
-            $inc: { thumb_attempts: 1 }
-          };
-          console.debug(`[DEBUG] Preparing SUCCESS update for ${media._id}:`, JSON.stringify(updateData));
-
-          // Update media document
-          const updateResult = await this.db.collection('media').updateOne(
-            { _id: media._id },
-            updateData
-          );
-          console.debug(`[DEBUG] SUCCESS DB update result for ${media._id}:`, JSON.stringify(updateResult));
-          if (updateResult.modifiedCount === 1) {
-             batchSuccessCount++; // Increment success count for the batch
-          } else {
-             console.warn(`[WARN] Thumbnail generated but DB update modified ${updateResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
-             batchFailureCount++; // Count as failure if DB update didn't work
-          }
-
-          // Prepare history data for success
-          const historyDataSuccess = {
-            mediaId: media._id,
-            sourceId: media.sourceId,
-            timestamp: new Date(),
-            status: 'success',
-            duration: Date.now() - genStartTime,
-            input_size: media.size,
-            output_size: thumbStats.size,
-            attempt: (media.thumb_attempts || 0) + 1
-          };
-          console.debug(`[DEBUG] Inserting SUCCESS history for ${media._id}:`, JSON.stringify(historyDataSuccess));
-
-          // Record success in history
-          await this.db.collection('thumbnail_history').insertOne(historyDataSuccess);
-
-          // Apply CPU throttling cooldown AFTER successful processing
-          await this.sleep(cooldownTime);
-
-        } catch (error) {
-          batchFailureCount++; // Increment failure count for the batch
-          logger.error('Thumbnail generation failed:', {
-            mediaId: media._id.toString(),
-            path: media.path,
-            error: error.message,
-            stack: error.stack
-          });
-          console.error(`[ERROR_DEBUG] Thumbnail generation failed for ${media._id}: ${error.message}`);
-
-          const currentAttempts = (media.thumb_attempts || 0) + 1;
-          const shouldRetry = currentAttempts < this.maxAttempts;
-          console.debug(`[DEBUG] Failure on attempt ${currentAttempts} for ${media._id}. Max attempts: ${this.maxAttempts}. Should retry: ${shouldRetry}`);
-
-          // Prepare update data for failure
-          const updateFailureData = {
-            $inc: { thumb_attempts: 1 },
-            $set: {
-              thumb_pending: shouldRetry
-            }
-          };
-          console.debug(`[DEBUG] Preparing FAILURE update for ${media._id}:`, JSON.stringify(updateFailureData));
-
-          // Update media document with failure
-          const updateFailureResult = await this.db.collection('media').updateOne(
-            { _id: media._id },
-            updateFailureData
-          );
-          console.debug(`[DEBUG] FAILURE DB update result for ${media._id}:`, JSON.stringify(updateFailureResult));
-          if (updateFailureResult.modifiedCount !== 1) {
-             console.warn(`[WARN] Thumbnail failed and DB update modified ${updateFailureResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
-          }
-
-          // Prepare history data for failure
-          const historyDataFailure = {
-            mediaId: media._id,
-            sourceId: media.sourceId,
-            timestamp: new Date(),
-            status: 'failed',
-            error: error.message,
-            duration: Date.now() - genStartTime,
-            input_size: media.size,
-            attempt: currentAttempts
-          };
-          console.debug(`[DEBUG] Inserting FAILURE history for ${media._id}:`, JSON.stringify(historyDataFailure));
-
-          // Record failure in history
-          await this.db.collection('thumbnail_history').insertOne(historyDataFailure);
-
-          // Still apply base cooldown after failure to prevent hammering broken files
-          await this.sleep(this.cpuCooldown);
+        if (totalPendingBeforeBatch === 0) {
+            console.debug(`[DEBUG] Batch #${batchNumber}: No more pending items found. Exiting loop.`);
+            break;
         }
-      }
-      // --- Add this log ---
-      console.debug(`[DEBUG] Finished processing loop for batch. Batch Results: ${batchSuccessCount} success, ${batchFailureCount} failures.`);
-      // --- End of added log ---
 
-    } catch (dbError) {
-        logger.error('Error fetching thumbnail batch:', dbError);
-        console.error('[ERROR_DEBUG] Error fetching thumbnail batch:', dbError);
+        console.debug(`[DEBUG] Batch #${batchNumber}: Fetching batch of up to ${this.batchSize} pending thumbnails (attempts < ${this.maxAttempts}).`);
+        const batch = await this.db.collection('media').find({
+          has_thumb: false,
+          thumb_pending: true,
+          thumb_attempts: { $lt: this.maxAttempts }
+        }).limit(this.batchSize).toArray();
+
+        if (batch.length === 0) {
+          console.debug(`[DEBUG] Batch #${batchNumber}: Fetched batch is empty, although count was > 0. Exiting loop.`);
+          break;
+        }
+
+        logger.debug(`Batch #${batchNumber}: Processing ${batch.length} pending thumbnails`);
+        console.debug(`[DEBUG] Batch #${batchNumber}: Found ${batch.length} items in batch:`, batch.map(m => ({ id: m._id, path: m.path, attempts: m.thumb_attempts })));
+
+        for (const media of batch) {
+          batchProcessedCount++;
+          totalProcessedCount++;
+          const genStartTime = Date.now();
+          console.debug(`[DEBUG] Batch #${batchNumber}, Item ${batchProcessedCount}/${batch.length}: Processing ${media._id} (${media.path})`);
+
+          try {
+            const cpuUsage = await this.getCPUUsage();
+            let cooldownTime = this.cpuCooldown;
+
+            if (cpuUsage > this.cpuUsageLimit) {
+               cooldownTime = this.cpuCooldown * this.throttleMultiplier;
+               logger.debug(`CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
+               console.debug(`[DEBUG] CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
+            } else {
+               console.debug(`[DEBUG] CPU usage OK (${cpuUsage.toFixed(1)}%), using base cooldown ${cooldownTime}ms`);
+            }
+
+            let thumbPath, thumbStats;
+            console.debug(`[DEBUG] Attempting thumbnail generation for type: ${media.type}`);
+            if (media.type === 'image') {
+              thumbPath = await this.thumbnailService.generateImageThumbnail(media.path, media.hash);
+              thumbStats = await fs.stat(thumbPath);
+              console.debug(`[DEBUG] Image thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
+            } else if (media.type === 'video') {
+              thumbPath = await this.thumbnailService.generateVideoThumbnail(media.path, media.hash);
+              thumbStats = await fs.stat(thumbPath);
+              console.debug(`[DEBUG] Video thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
+            } else {
+               console.warn(`[WARN] Unsupported media type for thumbnail generation: ${media.type} for ${media._id}`);
+               throw new Error(`Unsupported media type: ${media.type}`);
+            }
+
+            const updateData = {
+              $set: {
+                has_thumb: true,
+                thumb_pending: false,
+                thumb_path: thumbPath,
+                thumb_size: thumbStats.size,
+                thumb_size_human: formatBytes(thumbStats.size)
+              },
+              $inc: { thumb_attempts: 1 }
+            };
+            console.debug(`[DEBUG] Preparing SUCCESS update for ${media._id}:`, JSON.stringify(updateData));
+
+            const updateResult = await this.db.collection('media').updateOne(
+              { _id: media._id },
+              updateData
+            );
+            console.debug(`[DEBUG] SUCCESS DB update result for ${media._id}:`, JSON.stringify(updateResult));
+            if (updateResult.modifiedCount === 1) {
+               batchSuccessCount++;
+               totalSuccessCount++;
+            } else {
+               console.warn(`[WARN] Thumbnail generated but DB update modified ${updateResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
+               batchFailureCount++;
+               totalFailureCount++;
+            }
+
+            const historyDataSuccess = {
+              mediaId: media._id,
+              sourceId: media.sourceId,
+              timestamp: new Date(),
+              status: 'success',
+              duration: Date.now() - genStartTime,
+              input_size: media.size,
+              output_size: thumbStats.size,
+              attempt: (media.thumb_attempts || 0) + 1
+            };
+            console.debug(`[DEBUG] Inserting SUCCESS history for ${media._id}:`, JSON.stringify(historyDataSuccess));
+
+            await this.db.collection('thumbnail_history').insertOne(historyDataSuccess);
+
+            await this.sleep(cooldownTime);
+          } catch (error) {
+            batchFailureCount++;
+            totalFailureCount++;
+            logger.error('Thumbnail generation failed:', {
+              mediaId: media._id.toString(),
+              path: media.path,
+              error: error.message,
+              stack: error.stack
+            });
+            console.error(`[ERROR_DEBUG] Thumbnail generation failed for ${media._id}: ${error.message}`);
+
+            const currentAttempts = (media.thumb_attempts || 0) + 1;
+            const shouldRetry = currentAttempts < this.maxAttempts;
+            console.debug(`[DEBUG] Failure on attempt ${currentAttempts} for ${media._id}. Max attempts: ${this.maxAttempts}. Should retry: ${shouldRetry}`);
+
+            const updateFailureData = {
+              $inc: { thumb_attempts: 1 },
+              $set: {
+                thumb_pending: shouldRetry
+              }
+            };
+            console.debug(`[DEBUG] Preparing FAILURE update for ${media._id}:`, JSON.stringify(updateFailureData));
+
+            const updateFailureResult = await this.db.collection('media').updateOne(
+              { _id: media._id },
+              updateFailureData
+            );
+            console.debug(`[DEBUG] FAILURE DB update result for ${media._id}:`, JSON.stringify(updateFailureResult));
+            if (updateFailureResult.modifiedCount !== 1) {
+               console.warn(`[WARN] Thumbnail failed and DB update modified ${updateFailureResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
+            }
+
+            const historyDataFailure = {
+              mediaId: media._id,
+              sourceId: media.sourceId,
+              timestamp: new Date(),
+              status: 'failed',
+              error: error.message,
+              duration: Date.now() - genStartTime,
+              input_size: media.size,
+              attempt: currentAttempts
+            };
+            console.debug(`[DEBUG] Inserting FAILURE history for ${media._id}:`, JSON.stringify(historyDataFailure));
+
+            await this.db.collection('thumbnail_history').insertOne(historyDataFailure);
+
+            await this.sleep(this.cpuCooldown);
+          }
+        }
+
+        console.debug(`[DEBUG] Finished processing loop for Batch #${batchNumber}. Batch Results: ${batchSuccessCount} success, ${batchFailureCount} failures. Duration: ${Date.now() - batchStartTime}ms`);
+
+        await this.sleep(500);
+      }
+    } catch (error) {
+        logger.error('Error during thumbnail generation run:', error);
+        console.error('[ERROR_DEBUG] Error during thumbnail generation run:', error);
     } finally {
       this.isGenerating = false;
-      const duration = Date.now() - startTime;
-      logger.debug(`Thumbnail generation batch completed in ${duration}ms. Processed ${processedCount} items.`);
-      console.debug(`[DEBUG] Thumbnail generation batch finished. Duration: ${duration}ms. Processed: ${processedCount}. isGenerating set to false.`);
+      const overallDuration = Date.now() - overallStartTime;
+      logger.info(`Thumbnail generation FULL run completed in ${overallDuration}ms. Total Processed: ${totalProcessedCount}, Success: ${totalSuccessCount}, Failed: ${totalFailureCount}.`);
+      console.debug(`[DEBUG] Thumbnail generation FULL run finished. Duration: ${overallDuration}ms. Total Processed: ${totalProcessedCount}. isGenerating set to false.`);
     }
   }
 
