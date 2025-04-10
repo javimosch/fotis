@@ -18,11 +18,13 @@
         <!-- Main Layout -->
         <div class="min-h-screen flex">
             <!-- Sidebar -->
-            <year-sidebar 
-                :years="years" 
+            <!-- CONTEXT: Fixing prop name mismatch -->
+            <year-sidebar
+                :years-with-counts="yearsWithCounts"
                 :selected-year="selectedYear"
                 @year-selected="selectYear">
             </year-sidebar>
+            <!-- END CONTEXT -->
 
             <!-- Main Content -->
             <main class="flex-1 p-6">
@@ -40,7 +42,7 @@
                 </media-filter>
 
                 <!-- Gallery Grid -->
-                <media-grid 
+                <media-grid
                     :items="mediaItems"
                     :filter="currentFilter"
                     @item-clicked="openPreview">
@@ -48,7 +50,7 @@
 
                 <!-- Load More -->
                 <div class="text-center mt-8" v-if="hasMoreItems">
-                    <button 
+                    <button
                         @click="loadMore"
                         class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
                         :disabled="isLoading">
