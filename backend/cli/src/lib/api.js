@@ -1,14 +1,31 @@
 import axios from 'axios';
+import chalk from 'chalk';
 import { getApiUrl } from './config.js';
+import { logError } from '../utils/logger.js';
+
+const apiUrl = getApiUrl();
 
 const apiClient = axios.create({
-  baseURL: getApiUrl(),
+  baseURL: apiUrl,
   headers: {
     'Content-Type': 'application/json'
   }
 });
 
-// --- Media ---
+apiClient.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
+      console.error(chalk.red.bold('\nError: Could not connect to the Fotis API.'));
+      console.error(chalk.yellow(`Attempted to reach: ${apiUrl}`));
+      console.error(chalk.yellow('Please ensure the backend server is running.\n'));
+      process.exit(1);
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export async function listMedia({ offset, limit, year, month }) {
   const params = { offset, limit };
   if (year) params.year = year;
@@ -25,7 +42,6 @@ export async function getThumb(hash) {
   return response.data;
 }
 
-// --- Sources ---
 export async function listSources() {
   const response = await apiClient.get('/admin/sources');
   return response.data;
@@ -36,7 +52,6 @@ export async function addSource(type, config) {
   return response.data;
 }
 
-// --- Indexing ---
 export async function startIndexing(sourceId) {
   const response = await apiClient.post('/admin/index', { sourceId });
   return response.data;
@@ -52,7 +67,6 @@ export async function getIndexingHistory(sourceId) {
   return response.data;
 }
 
-// --- Thumbnails ---
 export async function getThumbnailStatus() {
   const response = await apiClient.get('/admin/thumbnails/status');
   return response.data;
@@ -68,13 +82,12 @@ export async function triggerThumbnailGeneration(sourceId = null) {
   return response.data;
 }
 
-// --- Deduplication ---
 export async function startDeduplication() {
   const response = await apiClient.post('/admin/deduplication/start');
-  return response.data; // Should contain { message: '...' }
+  return response.data;
 }
 
 export async function getDeduplicationStatus() {
   const response = await apiClient.get('/admin/deduplication/status');
-  return response.data; // Should contain the status object
+  return response.data;
 }
