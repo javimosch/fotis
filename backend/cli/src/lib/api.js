@@ -27,7 +27,7 @@ apiClient.interceptors.response.use(
 );
 
 export async function listMedia({ offset, limit, year, month }) {
-  const params = { offset, limit };
+  const params = { offset, limit, requireThumbnail:true };
   if (year) params.year = year;
   if (month) params.month = month;
 
@@ -77,8 +77,8 @@ export async function getThumbnailHistory(params = {}) {
   return response.data;
 }
 
-export async function triggerThumbnailGeneration(sourceId = null) {
-  const response = await apiClient.post('/admin/thumbnails/generate', { sourceId });
+export async function triggerThumbnailGeneration(sourceId = null, year = null) {
+  const response = await apiClient.post('/admin/thumbnails/generate', { sourceId, year });
   return response.data;
 }
 

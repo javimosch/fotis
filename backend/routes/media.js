@@ -53,17 +53,24 @@ router.get('/years', async (req, res, next) => {
 // Get indexed media with pagination and filters
 router.get('/', async (req, res, next) => {
   try {
-    const { offset = 0, limit = 50, year, month } = req.query;
+    const { offset = 0, limit = 50, year, month, requireThumbnail } = req.query;
     const db = req.app.locals.db;
 
     logger.debug('Media list request params:', {
       offset,
       limit,
       year,
-      month
+      month,
+      requireThumbnail
     });
 
     const query = {};
+    
+    // Skip items without thumbnails if requireThumbnail is true
+    if (requireThumbnail) {
+      query.has_thumb = true;
+      logger.debug('Filtering for items with thumbnails only');
+    }
     if (year) {
       // Ensure year is treated as a number for date matching
       const numericYear = parseInt(year, 10);

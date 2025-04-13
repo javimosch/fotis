@@ -118,47 +118,64 @@ router.get('/index/history', async (req, res, next) => {
 // Manually trigger thumbnail generation
 router.post('/thumbnails/generate', async (req, res, next) => {
   try {
-    const { sourceId } = req.body; // Optional sourceId
+    const { sourceId, year } = req.body; // Optional sourceId and year
     const thumbnailGenerator = req.app.locals.thumbnailGenerator;
     const db = req.app.locals.db;
 
+    // Build base query
+    const query = {
+      has_thumb: false,
+      thumb_attempts: { $lt: thumbnailGenerator.maxAttempts || 3 } // Use configured maxAttempts
+    };
+
+    // Add sourceId filter if provided
     if (sourceId) {
-       if (!ObjectId.isValid(sourceId)) {
-         return res.status(400).json({ error: 'Invalid sourceId format' });
-       }
-      // Update specific source to pending
-      logger.info(`Marking thumbnails as pending for sourceId: ${sourceId}`);
-      const updateResult = await db.collection('media').updateMany(
-        {
-          sourceId: new ObjectId(sourceId),
-          has_thumb: false,
-          thumb_attempts: { $lt: thumbnailGenerator.maxAttempts || 3 } // Use configured maxAttempts
-        },
-        {
-          $set: { thumb_pending: true }
-        }
-      );
-       logger.info(`Marked ${updateResult.modifiedCount} thumbnails as pending for source ${sourceId}.`);
-    } else {
-       logger.info('Marking all eligible thumbnails as pending.');
-       // Mark all eligible thumbnails as pending if no sourceId provided
-       const updateResult = await db.collection('media').updateMany(
-        {
-          has_thumb: false,
-          thumb_attempts: { $lt: thumbnailGenerator.maxAttempts || 3 }
-        },
-        {
-          $set: { thumb_pending: true }
-        }
-      );
-       logger.info(`Marked ${updateResult.modifiedCount} total thumbnails as pending.`);
+      if (!ObjectId.isValid(sourceId)) {
+        return res.status(400).json({ error: 'Invalid sourceId format' });
+      }
+      query.sourceId = new ObjectId(sourceId);
+      logger.info(`Adding sourceId filter: ${sourceId}`);
     }
 
-    // Trigger immediate generation (runs async)
-    logger.info('Triggering immediate thumbnail generation cycle.');
-    thumbnailGenerator.generatePendingThumbnails();
+    // Add year filter if provided
+    if (year) {
+      const numericYear = parseInt(year, 10);
+      if (isNaN(numericYear)) {
+        return res.status(400).json({ error: 'Invalid year format' });
+      }
+      const startDate = new Date(numericYear, 0, 1);
+      const endDate = new Date(numericYear, 11, 31, 23, 59, 59, 999);
+      query.timestamp = { $gte: startDate, $lte: endDate };
+      logger.info(`Adding year filter: ${year}, date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    }
 
-    res.status(202).json({ message: 'Thumbnail generation triggered' });
+    // Update matching documents to pending
+    const pendingDesc = [];
+    if (sourceId) pendingDesc.push(`sourceId: ${sourceId}`);
+    if (year) pendingDesc.push(`year: ${year}`);
+    logger.info(`Marking thumbnails as pending${pendingDesc.length ? ' for ' + pendingDesc.join(', ') : ' (all)'}`);
+
+    const updateResult = await db.collection('media').updateMany(
+      query,
+      { $set: { thumb_pending: true } }
+    );
+
+    logger.info(`Marked ${updateResult.modifiedCount} thumbnails as pending.`);
+
+    // Prepare filters for generation
+    const filters = {};
+    if (sourceId) filters.sourceId = sourceId;
+    if (year) filters.year = year;
+
+    // Trigger immediate generation (runs async) with filters
+    const filterDesc = Object.entries(filters).map(([k, v]) => `${k}: ${v}`).join(', ');
+    logger.info(`Triggering immediate thumbnail generation cycle${filterDesc ? ' with filters: ' + filterDesc : ''}`);
+    thumbnailGenerator.generatePendingThumbnails(filters);
+
+    res.status(202).json({ 
+      message: 'Thumbnail generation triggered',
+      filters: Object.keys(filters).length > 0 ? filters : undefined
+    });
   } catch (error) {
     logger.error('Thumbnail generation trigger error:', error);
     next(error);

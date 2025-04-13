@@ -322,16 +322,17 @@ export function adminCommands(program) {
            } else {
              if (isWatching) console.clear();
              console.log(chalk.bold('\nThumbnail Generation Status:'));
-             console.log(chalk.cyan(`• Currently Generating: ${status.isGenerating ? 'Yes' : 'No'}`));
-             console.log(`• Pending Count: ${status.pendingCount}`);
-             console.log(`• Failed Count (Max Attempts): ${status.failedCount}`);
-             console.log(`• CPU Usage: ${status.cpuUsage.toFixed(1)}%`);
-             console.log(`• CPU Throttling: ${status.cooldownActive ? chalk.yellow('Active') : 'Inactive'}`);
-             if (status.lastRunTime) {
-               console.log(`• Last Run Event: ${new Date(status.lastRunTime).toLocaleString()}`);
-             } else {
-               console.log(chalk.yellow('• No generation history found.'));
+             console.log(`• Currently Generating: ${status.isGenerating ? 'Yes' : 'No'}`);
+             console.log(`• Pending Count: ${status.pendingCount || 0}`);
+             console.log(`• Failed Count (Max Attempts): ${status.failedCount || 0}`);
+             console.log(`• CPU Usage: ${status.cpuUsage ? status.cpuUsage.toFixed(1) + '%' : 'N/A'}`);
+             console.log(`• CPU Throttling: ${status.cpuThrottling ? 'Active' : 'Inactive'}`);
+             if (status.isGenerating) {
+               console.log(`• Work Ratio: ${status.workRatio !== undefined ? status.workRatio + ' thumbs/sec' : 'N/A'}`);
+               console.log(`• Processed Count: ${status.processedCount || 0}`);
+               console.log(`• Elapsed Time: ${status.elapsedTime !== undefined ? status.elapsedTime + 's' : 'N/A'}`);
              }
+             console.log(`• Last Run Event: ${status.lastEvent ? new Date(status.lastEvent).toLocaleString() : 'N/A'}`);
            }
            return status.isGenerating || status.pendingCount > 0; // Keep watching if generating or pending
          } catch (error) {
@@ -424,10 +425,11 @@ export function adminCommands(program) {
     .command('generate')
     .description('Trigger thumbnail generation (marks pending and runs cycle)')
     .option('--source-id <id>', 'Generate thumbnails only for a specific source')
+    .option('--year <year>', 'Generate thumbnails only for media from a specific year')
     .action(async (options) => {
       const spinner = ora('Requesting thumbnail generation...').start();
       try {
-        const result = await api.triggerThumbnailGeneration(options.sourceId);
+        const result = await api.triggerThumbnailGeneration(options.sourceId, options.year);
         spinner.succeed(`Thumbnail generation requested. Status: ${result.message}`);
       } catch (error) {
         spinner.fail('Failed to trigger thumbnail generation');

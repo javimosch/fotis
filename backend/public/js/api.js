@@ -1,7 +1,7 @@
 // API utilities
 export const api = {
     async getMedia({ year = null, offset = 0, limit = 50 } = {}) {
-        const params = new URLSearchParams({ offset, limit });
+        const params = new URLSearchParams({ offset, limit ,requireThumbnail:true});
         if (year) params.append('year', year);
 
         console.debug(`API: Fetching media with params: ${params.toString()}`); // Debug log

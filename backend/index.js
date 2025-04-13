@@ -1,11 +1,12 @@
 require('dotenv').config();
+const logger = require('./utils/logger');
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const path = require('path');
 const Indexer = require('./services/indexer');
 const ThumbnailGenerationService = require('./services/thumbnailGenerator');
 const DeduplicationService = require('./services/deduplicationService');
-const logger = require('./utils/logger');
+
 
 const startServer = async () => {
   try {

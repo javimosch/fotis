@@ -7,10 +7,13 @@ class SftpService {
   constructor() {
     this.client = new Client();
     this.tempDir = path.join(os.tmpdir(), 'fotis-sftp-temp');
+
+    //prune tempDir
+    //fs.rmdir(this.tempDir, { recursive: true }).catch(() => {});
   }
 
   async connect(config) {
-    console.log('[DEBUG] SftpService.connect', { host: config.host, port: config.port, username: config.username });
+    console.debug('[DEBUG] SftpService.connect', { host: config.host, port: config.port, username: config.username });
     await this.client.connect({
       host: config.host,
       port: config.port,
@@ -22,53 +25,53 @@ class SftpService {
 
   async listFiles(path) {
     try {
-      console.log('[DEBUG] SftpService.listFiles', { path });
+      console.debug('[DEBUG] SftpService.listFiles', { path });
       return await this.client.list(path);
     } catch (error) {
-      console.log('[DEBUG] SftpService.listFiles error', { path, message: error.message, stack: error.stack });
+      console.debug('[DEBUG] SftpService.listFiles error', { path, message: error.message, stack: error.stack });
       throw error;
     }
   }
 
   async downloadFile(remotePath) {
     try {
-      console.log('[DEBUG] SftpService.downloadFile', { remotePath });
+      console.debug('[DEBUG] SftpService.downloadFile', { remotePath });
       const tempFilePath = path.join(this.tempDir, path.basename(remotePath));
       await this.client.get(remotePath, tempFilePath);
-      console.log('[DEBUG] SftpService.downloadFile success', { remotePath, tempFilePath });
+      console.debug('[DEBUG] SftpService.downloadFile success', { remotePath, tempFilePath });
       return tempFilePath;
     } catch (error) {
-      console.log('[DEBUG] SftpService.downloadFile error', { remotePath, message: error.message, stack: error.stack });
+      console.debug('[DEBUG] SftpService.downloadFile error', { remotePath, message: error.message, stack: error.stack });
       throw error;
     }
   }
 
   async ensureTempDir() {
     try {
-      console.log('[DEBUG] SftpService.ensureTempDir', { tempDir: this.tempDir });
+      console.debug('[DEBUG] SftpService.ensureTempDir', { tempDir: this.tempDir });
       await fs.mkdir(this.tempDir, { recursive: true });
     } catch (error) {
-      console.log('[DEBUG] SftpService.ensureTempDir error', { tempDir: this.tempDir, message: error.message, stack: error.stack });
+      console.debug('[DEBUG] SftpService.ensureTempDir error', { tempDir: this.tempDir, message: error.message, stack: error.stack });
       throw error;
     }
   }
 
   async cleanupTempFile(tempFilePath) {
     try {
-      console.log('[DEBUG] SftpService.cleanupTempFile', { tempFilePath });
+      console.debug('[DEBUG] SftpService.cleanupTempFile', { tempFilePath });
       await fs.unlink(tempFilePath);
     } catch (error) {
-      console.log('[DEBUG] SftpService.cleanupTempFile error', { tempFilePath, message: error.message, stack: error.stack });
+      console.debug('[DEBUG] SftpService.cleanupTempFile error', { tempFilePath, message: error.message, stack: error.stack });
       // Don't throw error for cleanup failures
     }
   }
 
   async disconnect() {
     try {
-      console.log('[DEBUG] SftpService.disconnect');
+      console.debug('[DEBUG] SftpService.disconnect');
       await this.client.end();
     } catch (error) {
-      console.log('[DEBUG] SftpService.disconnect error', { message: error.message, stack: error.stack });
+      console.debug('[DEBUG] SftpService.disconnect error', { message: error.message, stack: error.stack });
     }
   }
 }

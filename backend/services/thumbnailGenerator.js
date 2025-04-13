@@ -8,17 +8,23 @@ const { ObjectId } = require('mongodb');
 const SftpService = require('./sftp');
 
 class ThumbnailGenerationService {
-  constructor(db) {
+  constructor(db, config = {}) {
     this.db = db;
     this.thumbnailService = new ThumbnailService();
     this.sftpService = new SftpService();
     this.isGenerating = false;
-    this.batchSize = parseInt(process.env.THUMB_BATCH_SIZE, 10) || 10;
-    this.maxAttempts = parseInt(process.env.THUMB_MAX_ATTEMPTS, 10) || 3;
-    this.cpuCooldown = parseInt(process.env.THUMB_CPU_COOLDOWN, 10) || 2000;
-    this.cpuUsageLimit = parseInt(process.env.THUMB_CPU_USAGE_LIMIT, 10) || 80;
-    this.throttleMultiplier = parseInt(process.env.THUMB_THROTTLE_MULTIPLIER, 10) || 2;
+    this.batchSize = config.batchSize || parseInt(process.env.THUMB_BATCH_SIZE, 10) || 10;
+    this.maxAttempts = config.maxAttempts || parseInt(process.env.THUMB_MAX_ATTEMPTS, 10) || 3;
+    this.cpuCooldown = config.cpuCooldown || parseInt(process.env.THUMB_CPU_COOLDOWN, 10) || 2000;
+    this.cpuUsageLimit = config.cpuUsageLimit || parseInt(process.env.THUMB_CPU_USAGE_LIMIT, 10) || 80;
+    this.throttleMultiplier = config.throttleMultiplier || parseInt(process.env.THUMB_THROTTLE_MULTIPLIER, 10) || 2;
     this.sftpConnections = {};
+
+    // Performance tracking
+    this.processedCount = 0;
+    this.processingStartTime = null;
+    this.lastProcessedTime = null;
+    this.currentWorkRatio = 0; // thumbs/sec
   }
 
   async start() {
@@ -65,15 +71,39 @@ class ThumbnailGenerationService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async generatePendingThumbnails() {
+  async generatePendingThumbnails(filters = {}) {
     if (this.isGenerating) {
       logger.debug('Thumbnail generation already in progress, skipping run.');
       console.debug('[DEBUG] Thumbnail generation already in progress, skipping run.');
       return;
     }
 
+    // Build base query
+    const baseQuery = {
+      has_thumb: false,
+      thumb_pending: true,
+      thumb_attempts: { $lt: this.maxAttempts }
+    };
+
+    // Add sourceId filter if provided
+    if (filters.sourceId) {
+      baseQuery.sourceId = new ObjectId(filters.sourceId);
+      console.debug(`[DEBUG] Adding sourceId filter: ${filters.sourceId}`);
+    }
+
+    // Add year filter if provided
+    if (filters.year) {
+      const numericYear = parseInt(filters.year, 10);
+      const startDate = new Date(numericYear, 0, 1);
+      const endDate = new Date(numericYear, 11, 31, 23, 59, 59, 999);
+      baseQuery.timestamp = { $gte: startDate, $lte: endDate };
+      console.debug(`[DEBUG] Adding year filter: ${filters.year}, date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    }
+
     console.debug('[DEBUG] Starting generatePendingThumbnails FULL run.');
     this.isGenerating = true;
+    this.processingStartTime = Date.now();
+    this.processedCount = 0;
     const overallStartTime = Date.now();
     let totalProcessedCount = 0;
     let totalSuccessCount = 0;
@@ -88,12 +118,8 @@ class ThumbnailGenerationService {
         let batchSuccessCount = 0;
         let batchFailureCount = 0;
 
-        const totalPendingBeforeBatch = await this.db.collection('media').countDocuments({
-          has_thumb: false,
-          thumb_pending: true,
-          thumb_attempts: { $lt: this.maxAttempts }
-        });
-        console.debug(`[DEBUG] Batch #${batchNumber}: Total pending items BEFORE fetching batch: ${totalPendingBeforeBatch}`);
+        const totalPendingBeforeBatch = await this.db.collection('media').countDocuments(baseQuery);
+        console.debug(`[DEBUG] Batch #${batchNumber}: Total pending items BEFORE fetching batch: ${totalPendingBeforeBatch}, baseQuery: ${JSON.stringify(baseQuery)}`);
 
         if (totalPendingBeforeBatch === 0) {
             console.debug(`[DEBUG] Batch #${batchNumber}: No more pending items found. Exiting loop.`);
@@ -101,11 +127,7 @@ class ThumbnailGenerationService {
         }
 
         console.debug(`[DEBUG] Batch #${batchNumber}: Fetching batch of up to ${this.batchSize} pending thumbnails (attempts < ${this.maxAttempts}).`);
-        const batch = await this.db.collection('media').find({
-          has_thumb: false,
-          thumb_pending: true,
-          thumb_attempts: { $lt: this.maxAttempts }
-        }).limit(this.batchSize).toArray();
+        const batch = await this.db.collection('media').find(baseQuery).limit(this.batchSize).toArray();
 
         if (batch.length === 0) {
           console.debug(`[DEBUG] Batch #${batchNumber}: Fetched batch is empty, although count was > 0. Exiting loop.`);
@@ -220,6 +242,10 @@ class ThumbnailGenerationService {
 
             await this.db.collection('thumbnail_history').insertOne(historyDataSuccess);
 
+            this.processedCount++;
+            this.lastProcessedTime = Date.now();
+            console.debug(`[DEBUG] Successfully generated thumbnail for ${media._id}`);
+
             await this.sleep(cooldownTime);
           } catch (error) {
             batchFailureCount++;
@@ -295,9 +321,11 @@ class ThumbnailGenerationService {
       this.sftpConnections = {};
 
       this.isGenerating = false;
-      const overallDuration = Date.now() - overallStartTime;
-      logger.info(`Thumbnail generation FULL run completed in ${overallDuration}ms. Total Processed: ${totalProcessedCount}, Success: ${totalSuccessCount}, Failed: ${totalFailureCount}.`);
-      console.debug(`[DEBUG] Thumbnail generation FULL run finished. Duration: ${overallDuration}ms. Total Processed: ${totalProcessedCount}. isGenerating set to false.`);
+      const totalDuration = Date.now() - overallStartTime;
+      const finalWorkRatio = ((this.processedCount / totalDuration) * 1000).toFixed(2);
+      console.debug(`[DEBUG] Completed generatePendingThumbnails FULL run. Duration: ${totalDuration}ms, Work ratio: ${finalWorkRatio} thumbs/sec`);
+      logger.info(`Thumbnail generation FULL run completed in ${totalDuration}ms. Total Processed: ${totalProcessedCount}, Success: ${totalSuccessCount}, Failed: ${totalFailureCount}.`);
+      console.debug(`[DEBUG] Thumbnail generation FULL run finished. Duration: ${totalDuration}ms. Total Processed: ${totalProcessedCount}. isGenerating set to false.`);
     }
   }
 
@@ -322,13 +350,27 @@ class ThumbnailGenerationService {
     console.debug(`[DEBUG] Last history entry found:`, lastRun ? { id: lastRun._id, time: lastRun.timestamp } : null);
 
     const cpuUsage = await this.getCPUUsage();
+
+    // Calculate work ratio
+    let workRatio = 0;
+    let elapsedTime = 0;
+    if (this.isGenerating && this.processingStartTime) {
+      elapsedTime = Math.floor((Date.now() - this.processingStartTime) / 1000);
+      if (elapsedTime > 0) {
+        workRatio = (this.processedCount / elapsedTime).toFixed(2);
+      }
+    }
+
     const status = {
       isGenerating: this.isGenerating,
       pendingCount,
       failedCount,
-      lastRunTime: lastRun?.timestamp || null,
+      lastEvent: lastRun?.timestamp || null,
       cpuUsage,
-      cooldownActive: cpuUsage > this.cpuUsageLimit
+      cpuThrottling: cpuUsage > this.cpuUsageLimit,
+      workRatio,
+      processedCount: this.processedCount,
+      elapsedTime
     };
     console.debug('[DEBUG] Returning status:', status);
     return status;

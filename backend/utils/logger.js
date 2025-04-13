@@ -1,16 +1,22 @@
+let originalConsole = console;
+
 const debug = (...args) => {
   if (process.env.VERBOSE === '1') {
-    console.debug('[DEBUG]', ...args);
+    originalConsole.debug('[DEBUG]', ...args);
   }
 };
 
 const error = (...args) => {
-  console.error('[ERROR]', ...args);
+  originalConsole.error('[ERROR]', ...args);
 };
 
 const info = (...args) => {
-  console.log('[INFO]', ...args);
+  originalConsole.log('[INFO]', ...args);
 };
+
+console.debug = debug;
+console.error = error;
+console.info = info;
 
 module.exports = {
   debug,
