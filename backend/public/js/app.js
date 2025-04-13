@@ -130,9 +130,18 @@ const app = Vue.createApp({
             console.debug("App: Closing preview");
             this.previewItem = null;
         },
+        handleHashChange() {
+            const hash = window.location.hash.slice(1);
+            if (hash === 'admin') {
+                this.switchView('admin');
+            } else {
+                this.switchView('media');
+            }
+        },
         switchView(view) {
             console.debug(`App: Switching view to ${view}`);
             this.currentView = view;
+            window.location.hash = view === 'admin' ? '#admin' : '';
             if (view === 'media') {
                 this.loadMedia(true);
             }
@@ -140,16 +149,26 @@ const app = Vue.createApp({
     },
     created() {
         this.debouncedScrollHandler = this.debounce(this._handleScroll, 200);
+        
+        const hash = window.location.hash.slice(1);
+        if (hash === 'admin') {
+            this.currentView = 'admin';
+        }
+
+        window.addEventListener('hashchange', this.handleHashChange);
     },
     async mounted() {
         console.debug("App: Mounted.");
         await this.loadYears();
-        await this.loadMedia();
+        if (this.currentView === 'media') {
+            await this.loadMedia();
+        }
         window.addEventListener('scroll', this.debouncedScrollHandler);
     },
     beforeUnmount() {
-        console.debug("App: Unmounting, removing scroll listener.");
+        console.debug("App: Unmounting, removing listeners.");
         window.removeEventListener('scroll', this.debouncedScrollHandler);
+        window.removeEventListener('hashchange', this.handleHashChange);
         clearTimeout(this.scrollDebounceTimeout);
     },
     template: `

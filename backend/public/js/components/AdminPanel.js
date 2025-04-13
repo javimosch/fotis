@@ -1,11 +1,18 @@
+import { api } from '../api.js';
+import ThumbnailStatusModal from './ThumbnailStatusModal.js';
+
 export default {
     name: 'AdminPanel',
+    components: {
+        ThumbnailStatusModal
+    },
     data() {
         return {
             sources: [],
             isLoading: false,
             error: null,
             showAddSourceModal: false,
+            showThumbnailStatusModal: false,
             newSource: {
                 type: 'local',
                 config: {
@@ -15,7 +22,9 @@ export default {
                     user: '',
                     pass: ''
                 }
-            }
+            },
+            thumbnailStats: null,
+            isLoadingStats: false
         };
     },
     methods: {
@@ -104,10 +113,32 @@ export default {
                     pass: ''
                 }
             };
+        },
+        async loadThumbnailStats() {
+            this.isLoadingStats = true;
+            try {
+                this.thumbnailStats = await api.getThumbnailStats();
+            } catch (error) {
+                console.error('Failed to load thumbnail stats:', error);
+                this.error = 'Failed to load thumbnail statistics.';
+            } finally {
+                this.isLoadingStats = false;
+            }
+        },
+        async generateThumbnails(sourceId = null) {
+            try {
+                await api.generateThumbnails(sourceId);
+                this.showThumbnailStatusModal = true;
+                await this.loadThumbnailStats();
+            } catch (error) {
+                console.error('Failed to trigger thumbnail generation:', error);
+                this.error = error.message;
+            }
         }
     },
     mounted() {
         this.loadSources();
+        this.loadThumbnailStats();
     },
     template: `
         <div class="p-6">
@@ -118,6 +149,48 @@ export default {
                     class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
                     Add Source
                 </button>
+            </div>
+
+            <!-- Thumbnail Stats Section -->
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-semibold">Thumbnail Statistics</h3>
+                    <button 
+                        @click="generateThumbnails()"
+                        class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
+                        Generate All Thumbnails
+                    </button>
+                </div>
+
+                <div v-if="isLoadingStats" class="text-center py-4">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+                </div>
+
+                <div v-else-if="thumbnailStats" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <div class="text-sm text-gray-500">Total Media</div>
+                            <div class="text-2xl font-bold">{{ thumbnailStats.overall.total }}</div>
+                        </div>
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <div class="text-sm text-gray-500">With Thumbnails</div>
+                            <div class="text-2xl font-bold text-green-600">
+                                {{ thumbnailStats.overall.withThumbs }}
+                                <span class="text-sm font-normal">
+                                    ({{ ((thumbnailStats.overall.withThumbs / thumbnailStats.overall.total) * 100).toFixed(1) }}%)
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <div class="text-sm text-gray-500">Pending</div>
+                            <div class="text-2xl font-bold text-yellow-600">{{ thumbnailStats.overall.pending }}</div>
+                        </div>
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <div class="text-sm text-gray-500">Failed</div>
+                            <div class="text-2xl font-bold text-red-600">{{ thumbnailStats.overall.failed }}</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Sources List -->
@@ -153,11 +226,16 @@ export default {
                                 <td class="px-6 py-4 whitespace-nowrap text-sm">{{ source.type }}</td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm">{{ source.config.path }}</td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm">{{ new Date(source.createdAt).toLocaleString() }}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm space-x-2">
                                     <button 
                                         @click="testSource(source._id)"
                                         class="text-blue-600 hover:text-blue-800">
                                         Test Connection
+                                    </button>
+                                    <button 
+                                        @click="generateThumbnails(source._id)"
+                                        class="text-green-600 hover:text-green-800">
+                                        Generate Thumbnails
                                     </button>
                                 </td>
                             </tr>
@@ -249,6 +327,12 @@ export default {
                     </div>
                 </div>
             </div>
+
+            <!-- Thumbnail Status Modal -->
+            <ThumbnailStatusModal 
+                :show="showThumbnailStatusModal"
+                @close="showThumbnailStatusModal = false"
+            />
         </div>
     `
 };
