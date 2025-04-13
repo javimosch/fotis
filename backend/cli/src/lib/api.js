@@ -77,6 +77,11 @@ export async function getThumbnailHistory(params = {}) {
   return response.data;
 }
 
+export async function getThumbnailStats() {
+  const response = await apiClient.get('/admin/thumbnails/stats');
+  return response.data;
+}
+
 export async function testSource(sourceId) {
   const response = await apiClient.post('/admin/sources/test', { sourceId });
   return response.data;
@@ -94,5 +99,15 @@ export async function startDeduplication() {
 
 export async function getDeduplicationStatus() {
   const response = await apiClient.get('/admin/deduplication/status');
+  return response.data;
+}
+
+export async function startThumbnailPruning() {
+  const response = await apiClient.post('/admin/thumbnails/prune');
+  return response.data;
+}
+
+export async function getThumbnailPruningStatus() {
+  const response = await apiClient.get('/admin/thumbnails/prune/status');
   return response.data;
 }

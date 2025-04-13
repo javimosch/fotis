@@ -6,7 +6,7 @@ const path = require('path');
 const Indexer = require('./services/indexer');
 const ThumbnailGenerationService = require('./services/thumbnailGenerator');
 const DeduplicationService = require('./services/deduplicationService');
-
+const ThumbnailsPruner = require('./services/thumbnailsPruner');
 
 const startServer = async () => {
   try {
@@ -33,6 +33,11 @@ const startServer = async () => {
     const thumbnailGenerator = new ThumbnailGenerationService(db);
     await thumbnailGenerator.start();
     app.locals.thumbnailGenerator = thumbnailGenerator;
+
+    // Initialize thumbnail pruner
+    const thumbnailPruner = new ThumbnailsPruner(db);
+    thumbnailPruner.start();
+    app.locals.thumbnailPruner = thumbnailPruner;
 
     // Initialize Deduplication Service
     const deduplicationService = new DeduplicationService(db);

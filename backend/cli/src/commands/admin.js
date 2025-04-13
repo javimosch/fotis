@@ -485,6 +485,148 @@ export function adminCommands(program) {
       }
     });
 
+  thumbnails
+    .command('prune')
+    .description('Clean up invalid thumbnail entries')
+    .option('--watch', 'Watch pruning progress')
+    .action(async (options) => {
+      const isWatching = options.watch;
+      let spinner;
+
+      const checkStatus = async () => {
+        try {
+          if (!isWatching && !spinner) {
+            spinner = ora('Fetching pruning status...').start();
+          }
+          const status = await api.getThumbnailPruningStatus();
+          if (spinner) spinner.stop();
+
+          if (program.opts().json) {
+            console.log(JSON.stringify(status, null, 2));
+          } else {
+            if (isWatching) console.clear();
+            console.log(chalk.bold('\nThumbnail Pruning Status:'));
+            console.log(chalk.cyan(`• Currently Pruning: ${status.isPruning ? 'Yes' : 'No'}`));
+            
+            if (status.lastRun) {
+              console.log(`• Last Run: ${new Date(status.lastRun.timestamp).toLocaleString()}`);
+              console.log(`• Last Status: ${status.lastRun.status}`);
+              console.log(`• Files Checked: ${status.lastRun.processedCount}`);
+              console.log(`• Invalid Entries Removed: ${status.lastRun.removedCount}`);
+              console.log(`• Duration: ${status.lastRun.duration}ms`);
+
+              // Display detailed statistics if available
+              if (status.lastRun.details && status.lastRun.details.sourceStats) {
+                console.log(chalk.bold('\nRemoval Statistics by Source:'));
+                for (const [sourceId, stats] of Object.entries(status.lastRun.details.sourceStats)) {
+                  console.log(chalk.cyan(`\n• Source: ${sourceId}`));
+                  console.log(`  Total Removed: ${stats.total}`);
+                  if (stats.file_not_found > 0) {
+                    console.log(`  - Missing Files: ${stats.file_not_found}`);
+                  }
+                  if (stats.missing_thumb_path > 0) {
+                    console.log(`  - Missing Thumb Path: ${stats.missing_thumb_path}`);
+                  }
+                }
+              }
+
+              if (status.lastRun.error) {
+                console.log(chalk.red(`• Error: ${status.lastRun.error}`));
+              }
+            } else {
+              console.log(chalk.yellow('• No pruning history found.'));
+            }
+          }
+          return status.isPruning;
+        } catch (error) {
+          if (spinner) spinner.fail('Failed to fetch status');
+          else console.error(chalk.red('Error fetching status.'));
+          logError(error, 'Thumbnail Pruning Status Command');
+          if (program.opts().debug) {
+            console.error(error);
+          }
+          if (isWatching) throw error;
+          else process.exit(1);
+        }
+      };
+
+      try {
+        // First trigger the pruning
+        const spinner = ora('Starting thumbnail pruning...').start();
+        await api.startThumbnailPruning();
+        spinner.succeed('Thumbnail pruning started');
+
+        if (isWatching) {
+          console.log(chalk.yellow('\nWatching pruning progress (Ctrl+C to stop)...'));
+          let isPruning = true;
+          while (isPruning) {
+            isPruning = await checkStatus();
+            if (isPruning) {
+              await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+            } else {
+              console.log(chalk.green('\nPruning completed.'));
+            }
+          }
+        } else {
+          await checkStatus();
+        }
+      } catch (error) {
+        logError(error, 'Thumbnail Pruning Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
+  thumbnails
+    .command('stats')
+    .description('Show thumbnail statistics')
+    .action(async () => {
+      const spinner = ora('Fetching thumbnail statistics...').start();
+      try {
+        const stats = await api.getThumbnailStats();
+        spinner.stop();
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(stats, null, 2));
+        } else {
+          // Overall stats
+          console.log(chalk.bold('\nOverall Thumbnail Statistics:'));
+          const overall = stats.overall;
+          console.log(`• Total Media Items: ${overall.total}`);
+          console.log(`• With Thumbnails: ${overall.withThumbs} (${((overall.withThumbs / overall.total) * 100).toFixed(1)}%)`);
+          console.log(`• Pending Generation: ${overall.pending}`);
+          console.log(`• Failed (Max Attempts): ${overall.failed}`);
+          console.log(`• Missing/Not Generated: ${overall.total - overall.withThumbs - overall.pending - overall.failed}`);
+
+          // Stats by source
+          console.log(chalk.bold('\nBy Source:'));
+          stats.bySource.forEach(source => {
+            const sourceId = source._id || 'unknown';
+            const sourceType = source.source?.type || 'unknown';
+            const sourcePath = source.source?.config?.path || 'N/A';
+            
+            console.log(chalk.cyan(`\n• Source: ${sourceId}`));
+            console.log(`  Type: ${sourceType}`);
+            console.log(`  Path: ${sourcePath}`);
+            console.log(`  Total Items: ${source.total}`);
+            console.log(`  With Thumbnails: ${source.withThumbs} (${((source.withThumbs / source.total) * 100).toFixed(1)}%)`);
+            console.log(`  Pending Generation: ${source.pending}`);
+            console.log(`  Failed (Max Attempts): ${source.failed}`);
+            console.log(`  Missing/Not Generated: ${source.total - source.withThumbs - source.pending - source.failed}`);
+          });
+        }
+      } catch (error) {
+        spinner.fail('Failed to fetch thumbnail statistics');
+        logError(error, 'Thumbnail Stats Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
   // --- Deduplication commands ---
   const dedupe = admin.command('dedupe')
     .description('Manage media deduplication');

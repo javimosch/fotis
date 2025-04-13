@@ -275,6 +275,101 @@ router.get('/thumbnails/status', async (req, res, next) => {
   }
 });
 
+// Get thumbnail generation statistics
+router.get('/thumbnails/stats', async (req, res, next) => {
+  try {
+    const db = req.app.locals.db;
+    
+    // Run aggregation to get thumbnail stats
+    const stats = await db.collection('media').aggregate([
+      {
+        $facet: {
+          'bySource': [
+            {
+              $group: {
+                _id: '$sourceId',
+                total: { $sum: 1 },
+                withThumbs: { 
+                  $sum: { $cond: [{ $eq: ['$has_thumb', true] }, 1, 0] }
+                },
+                pending: {
+                  $sum: { $cond: [{ $eq: ['$thumb_pending', true] }, 1, 0] }
+                },
+                failed: {
+                  $sum: { 
+                    $cond: [
+                      { $and: [
+                        { $eq: ['$has_thumb', false] },
+                        { $eq: ['$thumb_pending', false] },
+                        { $gte: ['$thumb_attempts', 3] }
+                      ]},
+                      1,
+                      0
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          'overall': [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                withThumbs: { 
+                  $sum: { $cond: [{ $eq: ['$has_thumb', true] }, 1, 0] }
+                },
+                pending: {
+                  $sum: { $cond: [{ $eq: ['$thumb_pending', true] }, 1, 0] }
+                },
+                failed: {
+                  $sum: { 
+                    $cond: [
+                      { $and: [
+                        { $eq: ['$has_thumb', false] },
+                        { $eq: ['$thumb_pending', false] },
+                        { $gte: ['$thumb_attempts', 3] }
+                      ]},
+                      1,
+                      0
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]).toArray();
+
+    // Get source details for better reporting
+    const sourceStats = await Promise.all(
+      stats[0].bySource.map(async (stat) => {
+        if (!stat._id) return { ...stat, source: { type: 'unknown' } };
+        const source = await db.collection('sources').findOne({ _id: stat._id });
+        return {
+          ...stat,
+          source: source ? { 
+            type: source.type,
+            config: { 
+              ...source.config,
+              pass: undefined // Remove sensitive info
+            }
+          } : { type: 'unknown' }
+        };
+      })
+    );
+
+    res.json({
+      overall: stats[0].overall[0],
+      bySource: sourceStats
+    });
+  } catch (error) {
+    logger.error('Thumbnail stats error:', error);
+    next(error);
+  }
+});
+
 // Get thumbnail generation history
 router.get('/thumbnails/history', async (req, res, next) => {
   try {
@@ -284,6 +379,39 @@ router.get('/thumbnails/history', async (req, res, next) => {
     res.json(history);
   } catch (error) {
     logger.error('Thumbnail history error:', error);
+    next(error);
+  }
+});
+
+// Trigger thumbnail pruning
+router.post('/thumbnails/prune', async (req, res, next) => {
+  try {
+    const pruner = req.app.locals.thumbnailPruner;
+    if (!pruner) {
+      return res.status(503).json({ error: 'Thumbnail pruning service not available' });
+    }
+
+    // Run pruning asynchronously
+    pruner.pruneThumbnails();
+
+    res.status(202).json({ message: 'Thumbnail pruning process started' });
+  } catch (error) {
+    logger.error('Thumbnail pruning trigger error:', error);
+    next(error);
+  }
+});
+
+// Get thumbnail pruning status
+router.get('/thumbnails/prune/status', async (req, res, next) => {
+  try {
+    const pruner = req.app.locals.thumbnailPruner;
+    if (!pruner) {
+      return res.status(503).json({ error: 'Thumbnail pruning service not available' });
+    }
+    const status = await pruner.getStatus();
+    res.json(status);
+  } catch (error) {
+    logger.error('Thumbnail pruning status error:', error);
     next(error);
   }
 });

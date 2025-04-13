@@ -14,6 +14,8 @@
   - SFTP: Handles remote media source connections
   - Thumbnails: Generates thumbnails for images/videos
   - ThumbnailGenerator: Scheduled service for async thumbnail generation
+  - ThumbnailsPruner: Scheduled service for cleaning up invalid thumbnail entries
+  - DeduplicationService: Handles removal of duplicate media entries
 
 ## Environment Variables
 - MONGO_URI: MongoDB connection string
@@ -28,7 +30,7 @@
 ## API Routes
 - /media: Media listing and thumbnail endpoints
 - /admin: Source management and indexing control
-- /admin/thumbnails: Thumbnail generation management
+- /admin/thumbnails: Thumbnail generation and pruning management
 
 ## Development Guidelines
 - Use logger.js for consistent logging (debug, error, info levels)
@@ -39,6 +41,7 @@
 ## Common Operations
 - Media indexing happens asynchronously
 - Thumbnail generation runs every 5 minutes
+- Thumbnail pruning runs every 5 minutes
 - Source configurations are stored in MongoDB
 - CPU usage is monitored and throttled during thumbnail generation
 

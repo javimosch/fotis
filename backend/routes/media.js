@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const path = require('path');
+const { ObjectId } = require('mongodb');
 const fs = require('fs').promises;
 
 // --- New Route: Get Years with Counts ---
@@ -67,10 +68,11 @@ router.get('/', async (req, res, next) => {
     const query = {};
     
     // Skip items without thumbnails if requireThumbnail is true
-    if (requireThumbnail) {
+    //if (requireThumbnail) {
       query.has_thumb = true;
+      //query._id = new ObjectId('67fb81751758bd43fc2fe9d7')
       logger.debug('Filtering for items with thumbnails only');
-    }
+    //}
     if (year) {
       // Ensure year is treated as a number for date matching
       const numericYear = parseInt(year, 10);
