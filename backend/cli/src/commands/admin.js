@@ -390,6 +390,65 @@ export function adminCommands(program) {
       }
     });
 
+  sources
+    .command('remove')
+    .description('Remove an existing source')
+    .action(async () => {
+      const spinner = ora('Fetching sources...').start();
+      try {
+        const sources = await api.listSources();
+        spinner.stop();
+
+        if (sources.length === 0) {
+          console.log(chalk.yellow('\nNo sources configured yet.'));
+          return;
+        }
+
+        const { sourceId } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'sourceId',
+            message: 'Select source to remove:',
+            choices: sources.map(s => ({
+              name: `${s.type} - ${s.config.path} (${s._id})`,
+              value: s._id
+            }))
+          }
+        ]);
+
+        const source = sources.find(s => s._id === sourceId);
+        
+        const { confirm } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'confirm',
+            message: chalk.red(`Are you sure you want to remove this source?\nType: ${source.type}\nPath: ${source.config.path}\nThis action cannot be undone!`),
+            default: false
+          }
+        ]);
+
+        if (!confirm) {
+          console.log(chalk.yellow('Operation cancelled.'));
+          return;
+        }
+
+        spinner.text = 'Removing source...';
+        spinner.start();
+        
+        await api.deleteSource(sourceId);
+        
+        spinner.succeed('Source removed successfully');
+
+      } catch (error) {
+        if (spinner) spinner.fail('Failed to remove source');
+        logError(error, 'Remove Source Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
   const indexing = admin.command('index');
 
   indexing

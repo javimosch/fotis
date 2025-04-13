@@ -498,4 +498,35 @@ router.put('/sources/:sourceId', async (req, res, next) => {
   }
 });
 
+// Delete source
+router.delete('/sources/:sourceId', async (req, res, next) => {
+  try {
+    const { sourceId } = req.params;
+    const db = req.app.locals.db;
+
+    // Validate sourceId format
+    if (!ObjectId.isValid(sourceId)) {
+      return res.status(400).json({ error: 'Invalid source ID format' });
+    }
+
+    // Check if source exists
+    const source = await db.collection('sources').findOne({ _id: new ObjectId(sourceId) });
+    if (!source) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+
+    // Delete the source
+    const result = await db.collection('sources').deleteOne({ _id: new ObjectId(sourceId) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+
+    res.json({ message: 'Source deleted successfully' });
+  } catch (error) {
+    logger.error('Delete source error:', error);
+    next(error);
+  }
+});
+
 module.exports = router;

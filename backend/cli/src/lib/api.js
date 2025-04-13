@@ -116,3 +116,8 @@ export async function updateSource(sourceId, { type, config }) {
   const response = await apiClient.put(`/admin/sources/${sourceId}`, { type, config });
   return response.data;
 }
+
+export async function deleteSource(sourceId) {
+  const response = await apiClient.delete(`/admin/sources/${sourceId}`);
+  return response.data;
+}
