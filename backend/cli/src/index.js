@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import chalk from 'chalk';
+import { adminCommands } from './commands/admin/index.js';
 import { mediaCommands } from './commands/media.js';
-import { adminCommands } from './commands/admin.js';
 import { loadConfig } from './lib/config.js';
+import chalk from 'chalk';
 import { logError } from './utils/logger.js';
 
 const program = new Command();

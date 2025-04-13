@@ -1,54 +1,78 @@
-# Fotis Backend Knowledge
+# Code Organization Rules
 
-## Project Overview
-- Google Photos-style media viewer backend
-- Express.js server with MongoDB database
-- Supports local and SFTP media sources
-- Handles media indexing and thumbnail generation
+## File Size and Organization
 
-## Key Components
-- **Express Server**: Runs on port 3001 (default)
-- **MongoDB**: Required for storing media metadata and source configurations
-- **Services**:
-  - Indexer: Scans and indexes media from configured sources
-  - SFTP: Handles remote media source connections
-  - Thumbnails: Generates thumbnails for images/videos
-  - ThumbnailGenerator: Scheduled service for async thumbnail generation
-  - ThumbnailsPruner: Scheduled service for cleaning up invalid thumbnail entries
-  - DeduplicationService: Handles removal of duplicate media entries
+1. **Maximum File Size**
+   - Keep files under 300 lines
+   - Split by domain/feature when approaching limit
+   - Extract shared utilities
 
-## Environment Variables
-- MONGO_URI: MongoDB connection string
-- PORT: Server port (defaults to 3001)
-- VERBOSE: Set to '1' for debug logging
-- THUMB_BATCH_SIZE: Number of thumbnails to process per run (default: 10)
-- THUMB_MAX_ATTEMPTS: Maximum generation attempts per thumbnail (default: 3)
-- THUMB_CPU_COOLDOWN: Base cooldown time between thumbnails in ms (default: 2000)
-- THUMB_CPU_USAGE_LIMIT: CPU usage percentage to trigger throttling (default: 80)
-- THUMB_THROTTLE_MULTIPLIER: Cooldown multiplier when CPU is high (default: 2)
+2. **File Organization**
+   - Group related functionality in directories
+   - Use index.js files for exports
+   - Keep imports at top, organized by type
 
-## API Routes
-- /media: Media listing and thumbnail endpoints
-- /admin: Source management and indexing control
-- /admin/thumbnails: Thumbnail generation and pruning management
+3. **Code Structure**
+   - One feature/domain per file
+   - Extract complex logic to utilities
+   - Use composition over inheritance
+   - Keep functions focused and small
 
-## Development Guidelines
-- Use logger.js for consistent logging (debug, error, info levels)
-- Handle MongoDB connection in startServer()
-- Always include error handlers in routes
-- Keep error responses consistent: { error: 'message' }
+4. **Naming Conventions**
+   - Use descriptive, domain-specific names
+   - Group related files with common prefixes
+   - Suffix utilities with their purpose
 
-## Common Operations
-- Media indexing happens asynchronously
-- Thumbnail generation runs every 5 minutes
-- Thumbnail pruning runs every 5 minutes
-- Source configurations are stored in MongoDB
-- CPU usage is monitored and throttled during thumbnail generation
+5. **Directory Structure**
+   ```
+   feature/
+   ├── index.js           # Main exports
+   ├── feature-core.js    # Core logic
+   ├── feature-types.js   # Type definitions
+   └── utils/
+       ├── helpers.js     # Shared helpers
+       └── constants.js   # Constants
+   ```
 
-## Dependencies
-- express: Web server framework
-- mongodb: Database driver
-- sharp: Image processing
-- ssh2-sftp-client: SFTP connections
-- dotenv: Environment configuration
-- node-cron: Scheduled tasks
+## Best Practices
+
+1. **Command Pattern**
+   - Split complex commands into subcommands
+   - Group related commands in modules
+   - Share utilities between commands
+   - Keep command handlers focused
+
+2. **Error Handling**
+   - Consistent error messages
+   - Proper error propagation
+   - User-friendly output
+   - Debug information when needed
+
+3. **Testing**
+   - Test files in isolation
+   - Mock external dependencies
+   - Verify error cases
+   - Check edge conditions
+
+4. **Documentation**
+   - Document file purpose
+   - Add example usage
+   - Note dependencies
+   - Explain complex logic
+
+## When to Split Files
+
+Split a file when it:
+- Exceeds 300 lines
+- Handles multiple features
+- Has complex logic
+- Needs different testing strategies
+
+## How to Split Files
+
+1. Identify logical boundaries
+2. Extract shared utilities
+3. Create focused modules
+4. Use index.js for exports
+5. Update imports
+6. Test thoroughly
