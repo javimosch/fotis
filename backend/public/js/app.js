@@ -1,12 +1,12 @@
 import { api } from './api.js';
-import YearSidebar from './components/YearSidebar.js';
+import DateSidebar from './components/DateSidebar.js';
 import MediaFilter from './components/MediaFilter.js';
 import MediaGrid from './components/MediaGrid.js';
 import MediaPreview from './components/MediaPreview.js';
 
 const app = Vue.createApp({
     components: {
-        YearSidebar,
+        DateSidebar,
         MediaFilter,
         MediaGrid,
         MediaPreview
@@ -15,6 +15,7 @@ const app = Vue.createApp({
         return {
             yearsWithCounts: [],
             selectedYear: null,
+            selectedMonth: null,
             currentFilter: 'all',
             mediaItems: [],
             offset: 0,
@@ -49,6 +50,7 @@ const app = Vue.createApp({
             }
         },
         async loadMedia(reset = false) {
+            console.debug(`App: Loading media with year: ${this.selectedYear}, month: ${this.selectedMonth}`);
             if (this.isLoading) return;
 
             if (reset) {
@@ -72,6 +74,7 @@ const app = Vue.createApp({
             try {
                 const items = await api.getMedia({
                     year: this.selectedYear,
+                    month: this.selectedMonth,
                     offset: this.offset,
                     limit: this.limit
                 });
@@ -92,10 +95,18 @@ const app = Vue.createApp({
         },
         async selectYear(year) {
             console.debug(`App: Year selected: ${year}`);
-            if (this.selectedYear === year) {
+            if (this.selectedYear === year) return;
+            this.selectedYear = year;
+            this.selectedMonth = null; // Reset month when year changes
+            await this.loadMedia(true);
+        },
+
+        async selectMonth(month) {
+            console.debug(`App: Month selected: ${month}`);
+            if (this.selectedMonth === month) {
                 return;
             }
-            this.selectedYear = year;
+            this.selectedMonth = month;
             await this.loadMedia(true);
         },
         setFilter(filter) {

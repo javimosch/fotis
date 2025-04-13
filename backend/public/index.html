@@ -18,13 +18,13 @@
         <!-- Main Layout -->
         <div class="min-h-screen flex">
             <!-- Sidebar -->
-            <!-- CONTEXT: Fixing prop name mismatch -->
-            <year-sidebar
+            <date-sidebar
                 :years-with-counts="yearsWithCounts"
                 :selected-year="selectedYear"
-                @year-selected="selectYear">
-            </year-sidebar>
-            <!-- END CONTEXT -->
+                :selected-month="selectedMonth"
+                @year-selected="selectYear"
+                @month-selected="selectMonth">
+            </date-sidebar>
 
             <!-- Main Content -->
             <main class="flex-1 p-6">
