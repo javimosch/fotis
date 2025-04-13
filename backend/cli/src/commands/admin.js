@@ -26,6 +26,44 @@ export function adminCommands(program) {
   const sources = admin.command('sources');
 
   sources
+    .command('test')
+    .description('Test connection to all configured sources')
+    .action(async () => {
+      const spinner = ora('Testing sources...').start();
+      try {
+        const sources = await api.listSources();
+        spinner.stop();
+        
+        if (sources.length === 0) {
+          console.log(chalk.yellow('\nNo sources configured.'));
+          return;
+        }
+
+        console.log(chalk.bold('\nTesting sources:'));
+        for (const source of sources) {
+          const testSpinner = ora(`Testing ${source.type} source (${source._id})...`).start();
+          try {
+            const result = await api.testSource(source._id);
+            testSpinner.succeed(`${source.type} source (${source._id}): ${chalk.green('Connection successful')}`);
+            if (result.details) {
+              console.log(chalk.gray(`  Details: ${result.details}`));
+            }
+          } catch (error) {
+            testSpinner.fail(`${source.type} source (${source._id}): ${chalk.red('Connection failed')}`);
+            console.log(chalk.red(`  Error: ${error.response?.data?.error || error.message}`));
+          }
+        }
+      } catch (error) {
+        spinner.fail('Failed to test sources');
+        logError(error, 'Test Sources Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
+  sources
     .command('list')
     .description('List all configured sources')
     .action(async () => {

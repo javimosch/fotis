@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { ObjectId } = require('mongodb');
 const logger = require('../utils/logger');
+const fs = require('fs').promises;
+const SftpService = require('../services/sftp');
 
 // Trigger indexing job
 router.post('/index', async (req, res, next) => {
@@ -57,6 +59,85 @@ router.post('/sources', async (req, res, next) => {
 
   } catch (error) {
     logger.error('Add source error:', error);
+    next(error);
+  }
+});
+
+// Test source connection
+router.post('/sources/test', async (req, res, next) => {
+  try {
+    const { sourceId } = req.body;
+    const db = req.app.locals.db;
+
+    if (!sourceId || !ObjectId.isValid(sourceId)) {
+      return res.status(400).json({ error: 'Valid sourceId is required' });
+    }
+
+    logger.debug('Testing source connection:', sourceId);
+
+    const source = await db.collection('sources').findOne({
+      _id: new ObjectId(sourceId)
+    });
+
+    if (!source) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+
+    if (source.type === 'local') {
+      try {
+        const stats = await fs.stat(source.config.path);
+        if (!stats.isDirectory()) {
+          return res.status(400).json({ error: 'Path exists but is not a directory' });
+        }
+        res.json({ 
+          success: true, 
+          details: `Directory exists and is accessible: ${source.config.path}` 
+        });
+      } catch (error) {
+        if (error.code === 'ENOENT') {
+          return res.status(400).json({ error: 'Directory does not exist' });
+        }
+        if (error.code === 'EACCES') {
+          return res.status(400).json({ error: 'Permission denied accessing directory' });
+        }
+        throw error;
+      }
+    } else if (source.type === 'sftp') {
+      const sftp = new SftpService();
+      try {
+        await sftp.connect({
+          host: source.config.host,
+          port: source.config.port || 22,
+          username: source.config.user,
+          password: source.config.pass
+        });
+        
+        // Try to list files in the configured path
+        await sftp.listFiles(source.config.path);
+        
+        await sftp.disconnect();
+        res.json({ 
+          success: true, 
+          details: `Successfully connected to SFTP and verified path: ${source.config.path}` 
+        });
+      } catch (error) {
+        await sftp.disconnect().catch(() => {});
+        if (error.message.includes('connect')) {
+          return res.status(400).json({ error: 'Failed to connect to SFTP server' });
+        }
+        if (error.message.includes('Permission denied')) {
+          return res.status(400).json({ error: 'Permission denied accessing SFTP path' });
+        }
+        if (error.message.includes('No such file')) {
+          return res.status(400).json({ error: 'SFTP path does not exist' });
+        }
+        throw error;
+      }
+    } else {
+      return res.status(400).json({ error: 'Unknown source type' });
+    }
+  } catch (error) {
+    logger.error('Test source error:', error);
     next(error);
   }
 });

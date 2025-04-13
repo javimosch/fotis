@@ -77,6 +77,11 @@ export async function getThumbnailHistory(params = {}) {
   return response.data;
 }
 
+export async function testSource(sourceId) {
+  const response = await apiClient.post('/admin/sources/test', { sourceId });
+  return response.data;
+}
+
 export async function triggerThumbnailGeneration(sourceId = null, year = null) {
   const response = await apiClient.post('/admin/thumbnails/generate', { sourceId, year });
   return response.data;
