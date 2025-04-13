@@ -3,13 +3,15 @@ import DateSidebar from './components/DateSidebar.js';
 import MediaFilter from './components/MediaFilter.js';
 import MediaGrid from './components/MediaGrid.js';
 import MediaPreview from './components/MediaPreview.js';
+import AdminPanel from './components/AdminPanel.js';
 
 const app = Vue.createApp({
     components: {
         DateSidebar,
         MediaFilter,
         MediaGrid,
-        MediaPreview
+        MediaPreview,
+        AdminPanel
     },
     data() {
         return {
@@ -25,7 +27,8 @@ const app = Vue.createApp({
             isLoadingMore: false,
             previewItem: null,
             errorLoading: null,
-            scrollDebounceTimeout: null
+            scrollDebounceTimeout: null,
+            currentView: 'media'
         };
     },
     methods: {
@@ -97,10 +100,9 @@ const app = Vue.createApp({
             console.debug(`App: Year selected: ${year}`);
             if (this.selectedYear === year) return;
             this.selectedYear = year;
-            this.selectedMonth = null; // Reset month when year changes
+            this.selectedMonth = null;
             await this.loadMedia(true);
         },
-
         async selectMonth(month) {
             console.debug(`App: Month selected: ${month}`);
             if (this.selectedMonth === month) {
@@ -127,6 +129,13 @@ const app = Vue.createApp({
         closePreview() {
             console.debug("App: Closing preview");
             this.previewItem = null;
+        },
+        switchView(view) {
+            console.debug(`App: Switching view to ${view}`);
+            this.currentView = view;
+            if (view === 'media') {
+                this.loadMedia(true);
+            }
         }
     },
     created() {
@@ -142,7 +151,94 @@ const app = Vue.createApp({
         console.debug("App: Unmounting, removing scroll listener.");
         window.removeEventListener('scroll', this.debouncedScrollHandler);
         clearTimeout(this.scrollDebounceTimeout);
-    }
+    },
+    template: `
+        <div class="min-h-screen bg-gray-100">
+            <!-- Navigation -->
+            <nav class="bg-white shadow-sm">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex justify-between h-16">
+                        <div class="flex">
+                            <div class="flex space-x-8">
+                                <button 
+                                    @click="switchView('media')"
+                                    :class="[
+                                        'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium',
+                                        currentView === 'media' 
+                                            ? 'border-blue-500 text-gray-900'
+                                            : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                                    ]">
+                                    Media
+                                </button>
+                                <button 
+                                    @click="switchView('admin')"
+                                    :class="[
+                                        'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium',
+                                        currentView === 'admin'
+                                            ? 'border-blue-500 text-gray-900'
+                                            : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                                    ]">
+                                    Admin
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <!-- Media View -->
+                <div v-if="currentView === 'media'" class="py-6">
+                    <div class="flex gap-6">
+                        <DateSidebar 
+                            :years-with-counts="yearsWithCounts"
+                            :selected-year="selectedYear"
+                            :selected-month="selectedMonth"
+                            @year-selected="selectYear"
+                            @month-selected="selectMonth"
+                        />
+                        
+                        <div class="flex-1">
+                            <MediaFilter 
+                                :current-filter="currentFilter"
+                                @filter-changed="setFilter"
+                            />
+                            
+                            <div v-if="errorLoading" class="text-red-500 mb-4">
+                                {{ errorLoading }}
+                            </div>
+                            
+                            <div v-if="isLoading && !isLoadingMore" class="flex justify-center py-12">
+                                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                            </div>
+                            
+                            <template v-else>
+                                <MediaGrid 
+                                    :items="mediaItems"
+                                    :filter="currentFilter"
+                                    @item-clicked="openPreview"
+                                />
+                                
+                                <div v-if="isLoadingMore" class="text-center py-4">
+                                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <MediaPreview 
+                        v-if="previewItem"
+                        :item="previewItem"
+                        @close="closePreview"
+                    />
+                </div>
+
+                <!-- Admin View -->
+                <AdminPanel v-else />
+            </main>
+        </div>
+    `
 });
 
 app.mount('#app');

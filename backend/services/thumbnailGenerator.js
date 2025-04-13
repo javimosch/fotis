@@ -32,8 +32,8 @@ class ThumbnailGenerationService {
   async start() {
     // Run every 5 minutes
     cron.schedule('*/5 * * * *', async () => {
-      console.debug('[DEBUG] Cron job triggered thumbnail generation.');
-      await this.generatePendingThumbnails();
+      console.debug('[DEBUG] Cron job triggered thumbnail generation. (DISABLED)');
+     // await this.generatePendingThumbnails();
     });
     logger.info('Thumbnail generation service started');
     console.debug('[DEBUG] Thumbnail generation service cron schedule set.');
