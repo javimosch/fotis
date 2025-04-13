@@ -451,4 +451,51 @@ router.get('/deduplication/status', async (req, res, next) => {
   }
 });
 
+// Update existing source
+router.put('/sources/:sourceId', async (req, res, next) => {
+  try {
+    const { sourceId } = req.params;
+    const { type, config } = req.body;
+    const db = req.app.locals.db;
+
+    // Basic validation
+    if (!type || !config) {
+      return res.status(400).json({ error: 'Missing type or config' });
+    }
+    if (type === 'local' && !config.path) {
+      return res.status(400).json({ error: 'Missing config.path for local source' });
+    }
+    if (type === 'sftp' && (!config.host || !config.user || !config.pass || !config.path)) {
+      return res.status(400).json({ error: 'Missing required SFTP config fields (host, user, pass, path)' });
+    }
+
+    // Validate sourceId format
+    if (!ObjectId.isValid(sourceId)) {
+      return res.status(400).json({ error: 'Invalid source ID format' });
+    }
+
+    // Update the source
+    const result = await db.collection('sources').findOneAndUpdate(
+      { _id: new ObjectId(sourceId) },
+      { 
+        $set: {
+          type,
+          config,
+          updatedAt: new Date()
+        }
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+
+    res.json(result.value);
+  } catch (error) {
+    logger.error('Update source error:', error);
+    next(error);
+  }
+});
+
 module.exports = router;

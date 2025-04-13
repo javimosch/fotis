@@ -111,3 +111,8 @@ export async function getThumbnailPruningStatus() {
   const response = await apiClient.get('/admin/thumbnails/prune/status');
   return response.data;
 }
+
+export async function updateSource(sourceId, { type, config }) {
+  const response = await apiClient.put(`/admin/sources/${sourceId}`, { type, config });
+  return response.data;
+}

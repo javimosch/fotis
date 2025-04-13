@@ -4,7 +4,6 @@ import inquirer from 'inquirer';
 import * as api from '../lib/api.js';
 import { logError } from '../utils/logger.js';
 
-// Helper function to format bytes (copied from backend utils - keep it DRY later if possible)
 function formatBytes(bytes) {
   if (bytes === null || bytes === undefined || isNaN(bytes)) return 'N/A';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -22,7 +21,6 @@ function formatBytes(bytes) {
 export function adminCommands(program) {
   const admin = program.command('admin');
 
-  // --- Sources management ---
   const sources = admin.command('sources');
 
   sources
@@ -84,10 +82,8 @@ export function adminCommands(program) {
             console.log(chalk.cyan(`\n• Source ID: ${source._id}`));
             console.log(`  Type: ${source.type}`);
             console.log(`  Created: ${new Date(source.createdAt).toLocaleString()}`);
-            // Display config nicely
             console.log(`  Config:`);
             for (const [key, value] of Object.entries(source.config)) {
-              // Mask password
               const displayValue = key === 'pass' ? '********' : value;
               console.log(`    ${key}: ${displayValue}`);
             }
@@ -152,7 +148,6 @@ export function adminCommands(program) {
             { type: 'input', name: 'path', message: 'Enter remote path:', when: !options.path }
           ];
           const answers = await inquirer.prompt(questions.filter(q => q.when !== false)); // Only ask if not provided
-          // Merge provided options and answers
           const sftpOpts = { ...options, ...answers };
 
           if (!sftpOpts.host || !sftpOpts.user || !sftpOpts.pass || !sftpOpts.path) {
@@ -178,7 +173,7 @@ export function adminCommands(program) {
           if (program.opts().json) {
             console.log(JSON.stringify(result, null, 2));
           } else {
-            console.log(chalk.cyan(`\nSource ID: ${result._id}`)); // Use _id from returned object
+            console.log(chalk.cyan(`\nSource ID: ${result._id}`));
             console.log(chalk.bold('\nSource Configuration:'));
             console.log(`Type: ${result.type}`);
             for (const [key, value] of Object.entries(result.config)) {
@@ -195,7 +190,6 @@ export function adminCommands(program) {
           process.exit(1);
         }
       } catch (error) {
-        // Catch errors from inquirer or validation
         logError(error, 'Add Source Command Error');
         if (program.opts().debug) {
           console.error(error);
@@ -204,7 +198,198 @@ export function adminCommands(program) {
       }
     });
 
-  // --- Indexing commands ---
+  sources
+    .command('edit')
+    .description('Edit an existing source')
+    .option('--source-id <id>', 'Source ID to edit')
+    .option('--type <type>', 'New source type (local or sftp)')
+    .option('--path <path>', 'New path to media files')
+    .option('--host <host>', 'New SFTP host')
+    .option('--port <port>', 'New SFTP port')
+    .option('--user <username>', 'New SFTP username')
+    .option('--pass <password>', 'New SFTP password')
+    .action(async (options) => {
+      let spinner = ora('Fetching sources...').start();
+      try {
+        const sources = await api.listSources();
+        spinner.stop();
+
+        let sourceId = options.sourceId;
+        let source;
+
+        if (!sourceId) {
+          if (sources.length === 0) {
+            console.log(chalk.yellow('\nNo sources configured yet.'));
+            return;
+          }
+
+          const answers = await inquirer.prompt([
+            {
+              type: 'list',
+              name: 'sourceId',
+              message: 'Select source to edit:',
+              choices: sources.map(s => ({
+                name: `${s.type} - ${s.config.path} (${s._id})`,
+                value: s._id
+              }))
+            }
+          ]);
+          sourceId = answers.sourceId;
+        }
+
+        source = sources.find(s => s._id === sourceId);
+        if (!source) {
+          console.error(chalk.red(`Source with ID ${sourceId} not found`));
+          process.exit(1);
+        }
+
+        if (!options.type && !options.path && !options.host && !options.port && !options.user && !options.pass) {
+          const typeAnswer = await inquirer.prompt([{
+            type: 'list',
+            name: 'type',
+            message: 'Select source type:',
+            default: source.type,
+            choices: ['local', 'sftp']
+          }]);
+
+          const newType = typeAnswer.type;
+          let config = { ...source.config };
+
+          if (newType === 'local') {
+            const answer = await inquirer.prompt([{
+              type: 'input',
+              name: 'path',
+              message: 'Enter local path:',
+              default: source.type === 'local' ? source.config.path : ''
+            }]);
+            config = { path: answer.path };
+          } else if (newType === 'sftp') {
+            const questions = [
+              {
+                type: 'input',
+                name: 'host',
+                message: 'Enter SFTP host:',
+                default: source.type === 'sftp' ? source.config.host : ''
+              },
+              {
+                type: 'input',
+                name: 'port',
+                message: 'Enter SFTP port:',
+                default: source.type === 'sftp' ? source.config.port : '22',
+                validate: (value) => /^\d+$/.test(value) && parseInt(value) > 0 && parseInt(value) < 65536 || 'Invalid port number'
+              },
+              {
+                type: 'input',
+                name: 'user',
+                message: 'Enter SFTP username:',
+                default: source.type === 'sftp' ? source.config.user : ''
+              },
+              {
+                type: 'password',
+                name: 'pass',
+                message: 'Enter SFTP password:',
+                mask: '*',
+                default: source.type === 'sftp' ? source.config.pass : ''
+              },
+              {
+                type: 'input',
+                name: 'path',
+                message: 'Enter remote path:',
+                default: source.type === 'sftp' ? source.config.path : ''
+              }
+            ];
+            const answers = await inquirer.prompt(questions);
+            config = {
+              host: answers.host,
+              port: parseInt(answers.port),
+              user: answers.user,
+              pass: answers.pass,
+              path: answers.path
+            };
+          }
+
+          spinner = ora('Updating source...').start();
+          
+          const result = await api.updateSource(sourceId, {
+            type: newType,
+            config: config
+          });
+
+          spinner.succeed('Source updated successfully');
+          
+          if (program.opts().json) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(chalk.cyan(`\nSource ID: ${result._id}`));
+            console.log(chalk.bold('\nUpdated Configuration:'));
+            console.log(`Type: ${result.type}`);
+            for (const [key, value] of Object.entries(result.config)) {
+              const displayValue = key === 'pass' ? '********' : value;
+              console.log(`  ${key}: ${displayValue}`);
+            }
+          }
+        } else {
+          const newType = options.type || source.type;
+          let config = { ...source.config };
+
+          if (newType === 'local') {
+            if (options.path) {
+              config = { path: options.path };
+            }
+          } else if (newType === 'sftp') {
+            if (options.path) config.path = options.path;
+            if (options.host) config.host = options.host;
+            if (options.port) config.port = parseInt(options.port);
+            if (options.user) config.user = options.user;
+            if (options.pass) config.pass = options.pass;
+          } else {
+            console.error(chalk.red(`Error: Invalid source type '${newType}'. Use 'local' or 'sftp'.`));
+            process.exit(1);
+          }
+
+          spinner = ora('Updating source...').start();
+          
+          const result = await api.updateSource(sourceId, {
+            type: newType,
+            config: config
+          });
+
+          spinner.succeed('Source updated successfully');
+          
+          if (program.opts().json) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(chalk.cyan(`\nSource ID: ${result._id}`));
+            console.log(chalk.bold('\nUpdated Configuration:'));
+            console.log(`Type: ${result.type}`);
+            for (const [key, value] of Object.entries(result.config)) {
+              const displayValue = key === 'pass' ? '********' : value;
+              console.log(`  ${key}: ${displayValue}`);
+            }
+          }
+        }
+
+        const testSpinner = ora('Testing updated source...').start();
+        try {
+          const testResult = await api.testSource(sourceId);
+          testSpinner.succeed(`Connection test: ${chalk.green('Success')}`);
+          if (testResult.details) {
+            console.log(chalk.gray(`Details: ${testResult.details}`));
+          }
+        } catch (error) {
+          testSpinner.fail(`Connection test: ${chalk.red('Failed')}`);
+          console.log(chalk.red(`Error: ${error.response?.data?.error || error.message}`));
+        }
+      } catch (error) {
+        if (spinner) spinner.fail('Failed to update source');
+        logError(error, 'Edit Source Command');
+        if (program.opts().debug) {
+          console.error(error);
+        }
+        process.exit(1);
+      }
+    });
+
   const indexing = admin.command('index');
 
   indexing
@@ -246,7 +431,7 @@ export function adminCommands(program) {
           if (program.opts().json) {
             console.log(JSON.stringify(status, null, 2));
           } else {
-            if (isWatching) console.clear(); // Clear screen in watch mode
+            if (isWatching) console.clear();
             console.log(chalk.bold(`\nIndexing Status (Source: ${sourceId}):`));
             console.log(chalk.cyan(`• Is Indexing: ${status.isIndexing ? 'Yes' : 'No'}`));
             console.log(`• Total Files in DB: ${status.totalFiles}`);
@@ -260,7 +445,6 @@ export function adminCommands(program) {
               console.log(chalk.yellow('• No indexing history found for this source.'));
             }
           }
-          // Return true if still indexing, false otherwise (for watch loop)
           return status.isIndexing;
         } catch (error) {
           if (spinner) spinner.fail('Failed to fetch status');
@@ -269,8 +453,7 @@ export function adminCommands(program) {
           if (program.opts().debug) {
             console.error(error);
           }
-          // Stop watching on error
-          if (isWatching) throw error; // Re-throw to exit watch loop
+          if (isWatching) throw error;
           else process.exit(1);
         }
       };
@@ -282,13 +465,12 @@ export function adminCommands(program) {
           while (stillIndexing) {
             stillIndexing = await checkStatus();
             if (stillIndexing) {
-               await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+               await new Promise(resolve => setTimeout(resolve, 5000));
             } else {
                console.log(chalk.green('\nIndexing finished.'));
             }
           }
         } catch (error) {
-          // Error already logged in checkStatus
           console.error(chalk.red('Exiting watch mode due to error.'));
           process.exit(1);
         }
@@ -337,7 +519,6 @@ export function adminCommands(program) {
       }
     });
 
-  // --- Thumbnail generation commands ---
   const thumbnails = admin.command('thumbnails')
     .description('Manage thumbnail generation');
 
@@ -378,7 +559,7 @@ export function adminCommands(program) {
                console.log(`• Last Run Event: ${new Date(status.lastEvent).toLocaleString()}`);
              }
            }
-           return status.isGenerating || status.pendingCount > 0; // Keep watching if generating or pending
+           return status.isGenerating || status.pendingCount > 0;
          } catch (error) {
            if (spinner) spinner.fail('Failed to fetch status');
            else console.error(chalk.red('Error fetching status.'));
@@ -398,7 +579,7 @@ export function adminCommands(program) {
            while (keepWatching) {
              keepWatching = await checkStatus();
              if (keepWatching) {
-               await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+               await new Promise(resolve => setTimeout(resolve, 5000));
              } else {
                 console.log(chalk.green('\nGeneration idle and no pending items.'));
              }
@@ -515,7 +696,6 @@ export function adminCommands(program) {
               console.log(`• Invalid Entries Removed: ${status.lastRun.removedCount}`);
               console.log(`• Duration: ${status.lastRun.duration}ms`);
 
-              // Display detailed statistics if available
               if (status.lastRun.details && status.lastRun.details.sourceStats) {
                 console.log(chalk.bold('\nRemoval Statistics by Source:'));
                 for (const [sourceId, stats] of Object.entries(status.lastRun.details.sourceStats)) {
@@ -551,7 +731,6 @@ export function adminCommands(program) {
       };
 
       try {
-        // First trigger the pruning
         const spinner = ora('Starting thumbnail pruning...').start();
         await api.startThumbnailPruning();
         spinner.succeed('Thumbnail pruning started');
@@ -562,7 +741,7 @@ export function adminCommands(program) {
           while (isPruning) {
             isPruning = await checkStatus();
             if (isPruning) {
-              await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+              await new Promise(resolve => setTimeout(resolve, 5000));
             } else {
               console.log(chalk.green('\nPruning completed.'));
             }
@@ -591,7 +770,6 @@ export function adminCommands(program) {
         if (program.opts().json) {
           console.log(JSON.stringify(stats, null, 2));
         } else {
-          // Overall stats
           console.log(chalk.bold('\nOverall Thumbnail Statistics:'));
           const overall = stats.overall;
           console.log(`• Total Media Items: ${overall.total}`);
@@ -600,7 +778,6 @@ export function adminCommands(program) {
           console.log(`• Failed (Max Attempts): ${overall.failed}`);
           console.log(`• Missing/Not Generated: ${overall.total - overall.withThumbs - overall.pending - overall.failed}`);
 
-          // Stats by source
           console.log(chalk.bold('\nBy Source:'));
           stats.bySource.forEach(source => {
             const sourceId = source._id || 'unknown';
@@ -627,7 +804,6 @@ export function adminCommands(program) {
       }
     });
 
-  // --- Deduplication commands ---
   const dedupe = admin.command('dedupe')
     .description('Manage media deduplication');
 
