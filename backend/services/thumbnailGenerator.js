@@ -5,17 +5,20 @@ const ThumbnailService = require('./thumbnails');
 const fs = require('fs').promises;
 const { formatBytes } = require('../utils/fileUtils');
 const { ObjectId } = require('mongodb');
+const SftpService = require('./sftp');
 
 class ThumbnailGenerationService {
   constructor(db) {
     this.db = db;
     this.thumbnailService = new ThumbnailService();
+    this.sftpService = new SftpService();
     this.isGenerating = false;
     this.batchSize = parseInt(process.env.THUMB_BATCH_SIZE, 10) || 10;
     this.maxAttempts = parseInt(process.env.THUMB_MAX_ATTEMPTS, 10) || 3;
     this.cpuCooldown = parseInt(process.env.THUMB_CPU_COOLDOWN, 10) || 2000;
     this.cpuUsageLimit = parseInt(process.env.THUMB_CPU_USAGE_LIMIT, 10) || 80;
     this.throttleMultiplier = parseInt(process.env.THUMB_THROTTLE_MULTIPLIER, 10) || 2;
+    this.sftpConnections = {};
   }
 
   async start() {
@@ -130,14 +133,46 @@ class ThumbnailGenerationService {
                console.debug(`[DEBUG] CPU usage OK (${cpuUsage.toFixed(1)}%), using base cooldown ${cooldownTime}ms`);
             }
 
+            // Get source configuration
+            const source = await this.db.collection('sources').findOne({ _id: new ObjectId(media.sourceId) });
+            if (!source) {
+              throw new Error(`Source not found for media: ${media._id}`);
+            }
+
+            let inputPath = media.path;
+            let tempFilePath = null;
+
+            // If source is SFTP, download the file first
+            if (source.type === 'sftp') {
+              console.debug(`[DEBUG] Source is SFTP, downloading file first`);
+              try {
+                // Get or create SFTP connection
+                if (!this.sftpConnections[source._id]) {
+                  this.sftpConnections[source._id] = this.sftpService;
+                  await this.sftpConnections[source._id].connect({
+                    host: source.config.host,
+                    port: source.config.port,
+                    username: source.config.user,
+                    password: source.config.pass
+                  });
+                }
+
+                tempFilePath = await this.sftpConnections[source._id].downloadFile(media.path);
+                inputPath = tempFilePath;
+              } catch (sftpError) {
+                console.log('[DEBUG] SFTP download error', { mediaId: media._id, path: media.path, message: sftpError.message, stack: sftpError.stack });
+                throw sftpError;
+              }
+            }
+
             let thumbPath, thumbStats;
             console.debug(`[DEBUG] Attempting thumbnail generation for type: ${media.type}`);
             if (media.type === 'image') {
-              thumbPath = await this.thumbnailService.generateImageThumbnail(media.path, media.hash);
+              thumbPath = await this.thumbnailService.generateImageThumbnail(inputPath, media.hash);
               thumbStats = await fs.stat(thumbPath);
               console.debug(`[DEBUG] Image thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
             } else if (media.type === 'video') {
-              thumbPath = await this.thumbnailService.generateVideoThumbnail(media.path, media.hash);
+              thumbPath = await this.thumbnailService.generateVideoThumbnail(inputPath, media.hash);
               thumbStats = await fs.stat(thumbPath);
               console.debug(`[DEBUG] Video thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
             } else {
@@ -234,6 +269,11 @@ class ThumbnailGenerationService {
 
             await this.sleep(this.cpuCooldown);
           }
+
+          if(process.env.THUMB_GENERATION_DEBUG === '1') {
+            console.debug(`[DEBUG] Batch #${batchNumber}: Batch Results: ${batchSuccessCount} success, ${batchFailureCount} failures. Duration: ${Date.now() - batchStartTime}ms`);
+            process.exit(0)
+          }
         }
 
         console.debug(`[DEBUG] Finished processing loop for Batch #${batchNumber}. Batch Results: ${batchSuccessCount} success, ${batchFailureCount} failures. Duration: ${Date.now() - batchStartTime}ms`);
@@ -244,6 +284,16 @@ class ThumbnailGenerationService {
         logger.error('Error during thumbnail generation run:', error);
         console.error('[ERROR_DEBUG] Error during thumbnail generation run:', error);
     } finally {
+      // Cleanup SFTP connections
+      for (const [sourceId, sftpConnection] of Object.entries(this.sftpConnections)) {
+        try {
+          await sftpConnection.disconnect();
+        } catch (error) {
+          console.log('[DEBUG] Error disconnecting SFTP', { sourceId, message: error.message });
+        }
+      }
+      this.sftpConnections = {};
+
       this.isGenerating = false;
       const overallDuration = Date.now() - overallStartTime;
       logger.info(`Thumbnail generation FULL run completed in ${overallDuration}ms. Total Processed: ${totalProcessedCount}, Success: ${totalSuccessCount}, Failed: ${totalFailureCount}.`);
