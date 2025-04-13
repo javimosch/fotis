@@ -1,4 +1,4 @@
-let originalConsole = console;
+let originalConsole = {...console};
 
 const debug = (...args) => {
   if (process.env.VERBOSE === '1') {

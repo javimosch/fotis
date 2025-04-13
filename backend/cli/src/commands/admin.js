@@ -322,17 +322,23 @@ export function adminCommands(program) {
            } else {
              if (isWatching) console.clear();
              console.log(chalk.bold('\nThumbnail Generation Status:'));
-             console.log(`• Currently Generating: ${status.isGenerating ? 'Yes' : 'No'}`);
-             console.log(`• Pending Count: ${status.pendingCount || 0}`);
-             console.log(`• Failed Count (Max Attempts): ${status.failedCount || 0}`);
-             console.log(`• CPU Usage: ${status.cpuUsage ? status.cpuUsage.toFixed(1) + '%' : 'N/A'}`);
+             console.log(chalk.cyan(`• Currently Generating: ${status.isGenerating ? 'Yes' : 'No'}`));
+             console.log(`• Pending Count: ${status.pendingCount}`);
+             console.log(`• Failed Count (Max Attempts): ${status.failedCount}`);
+             console.log(`• CPU Usage: ${status.cpuUsage.toFixed(1)}%`);
              console.log(`• CPU Throttling: ${status.cpuThrottling ? 'Active' : 'Inactive'}`);
-             if (status.isGenerating) {
-               console.log(`• Work Ratio: ${status.workRatio !== undefined ? status.workRatio + ' thumbs/sec' : 'N/A'}`);
-               console.log(`• Processed Count: ${status.processedCount || 0}`);
-               console.log(`• Elapsed Time: ${status.elapsedTime !== undefined ? status.elapsedTime + 's' : 'N/A'}`);
+             console.log(`• Work Ratio: ${status.workRatio} thumbs/sec`);
+             console.log(`• Processed Count: ${status.processedCount}`);
+             console.log(`• Elapsed Time: ${status.elapsedTime}s`);
+             if (status.remainingTime) {
+               console.log(chalk.green(`• Remaining Time: ${status.remainingTime}`));
              }
-             console.log(`• Last Run Event: ${status.lastEvent ? new Date(status.lastEvent).toLocaleString() : 'N/A'}`);
+             if (status.estimatedCompletionTime) {
+               console.log(chalk.green(`• Estimated Completion: ${status.estimatedCompletionTime}`));
+             }
+             if (status.lastEvent) {
+               console.log(`• Last Run Event: ${new Date(status.lastEvent).toLocaleString()}`);
+             }
            }
            return status.isGenerating || status.pendingCount > 0; // Keep watching if generating or pending
          } catch (error) {

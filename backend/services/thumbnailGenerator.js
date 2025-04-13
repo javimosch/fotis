@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const os = require('os');
+const path = require('path');
 const logger = require('../utils/logger');
 const ThumbnailService = require('./thumbnails');
 const fs = require('fs').promises;
@@ -15,9 +16,10 @@ class ThumbnailGenerationService {
     this.isGenerating = false;
     this.batchSize = config.batchSize || parseInt(process.env.THUMB_BATCH_SIZE, 10) || 10;
     this.maxAttempts = config.maxAttempts || parseInt(process.env.THUMB_MAX_ATTEMPTS, 10) || 3;
-    this.cpuCooldown = config.cpuCooldown || parseInt(process.env.THUMB_CPU_COOLDOWN, 10) || 2000;
+    this.cpuCooldown = config.cpuCooldown || parseFloat(process.env.THUMB_CPU_COOLDOWN) || 1;
     this.cpuUsageLimit = config.cpuUsageLimit || parseInt(process.env.THUMB_CPU_USAGE_LIMIT, 10) || 80;
     this.throttleMultiplier = config.throttleMultiplier || parseInt(process.env.THUMB_THROTTLE_MULTIPLIER, 10) || 2;
+    this.concurrentLimit = config.concurrentLimit || parseInt(process.env.THUMB_CONCURRENT_LIMIT, 10) || 1;
     this.sftpConnections = {};
 
     // Performance tracking
@@ -137,38 +139,28 @@ class ThumbnailGenerationService {
         logger.debug(`Batch #${batchNumber}: Processing ${batch.length} pending thumbnails`);
         console.debug(`[DEBUG] Batch #${batchNumber}: Found ${batch.length} items in batch:`, batch.map(m => ({ id: m._id, path: m.path, attempts: m.thumb_attempts })));
 
-        for (const media of batch) {
-          batchProcessedCount++;
-          totalProcessedCount++;
-          const genStartTime = Date.now();
-          console.debug(`[DEBUG] Batch #${batchNumber}, Item ${batchProcessedCount}/${batch.length}: Processing ${media._id} (${media.path})`);
+        console.debug(`[DEBUG] Batch #${batchNumber}: Processing batch of ${batch.length} items`);
 
-          try {
-            const cpuUsage = await this.getCPUUsage();
-            let cooldownTime = this.cpuCooldown;
+          // Process items in parallel with concurrency limit
+        for (let i = 0; i < batch.length; i += this.concurrentLimit) {
+          const chunk = batch.slice(i, i + this.concurrentLimit);
+          const promises = chunk.map(async (media) => {
+            try {
+              console.debug(`[DEBUG] Processing media ${media._id}`);
+              // Get source configuration
+              const source = await this.db.collection('sources').findOne({ _id: new ObjectId(media.sourceId) });
+              if (!source) {
+                throw new Error(`Source not found for media: ${media._id}`);
+              }
 
-            if (cpuUsage > this.cpuUsageLimit) {
-               cooldownTime = this.cpuCooldown * this.throttleMultiplier;
-               logger.debug(`CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
-               console.debug(`[DEBUG] CPU usage high (${cpuUsage.toFixed(1)}%), increasing cooldown to ${cooldownTime}ms`);
-            } else {
-               console.debug(`[DEBUG] CPU usage OK (${cpuUsage.toFixed(1)}%), using base cooldown ${cooldownTime}ms`);
-            }
+              let inputPath = media.path;
+              let needsCleanup = false;
 
-            // Get source configuration
-            const source = await this.db.collection('sources').findOne({ _id: new ObjectId(media.sourceId) });
-            if (!source) {
-              throw new Error(`Source not found for media: ${media._id}`);
-            }
+              // Handle SFTP sources
+              if (source.type === 'sftp') {
+                const source = await this.db.collection('sources').findOne({ _id: media.sourceId });
+                if (!source) throw new Error(`Source not found: ${media.sourceId}`);
 
-            let inputPath = media.path;
-            let tempFilePath = null;
-
-            // If source is SFTP, download the file first
-            if (source.type === 'sftp') {
-              console.debug(`[DEBUG] Source is SFTP, downloading file first`);
-              try {
-                // Get or create SFTP connection
                 if (!this.sftpConnections[source._id]) {
                   this.sftpConnections[source._id] = this.sftpService;
                   await this.sftpConnections[source._id].connect({
@@ -179,126 +171,86 @@ class ThumbnailGenerationService {
                   });
                 }
 
-                tempFilePath = await this.sftpConnections[source._id].downloadFile(media.path);
-                inputPath = tempFilePath;
-              } catch (sftpError) {
-                console.log('[DEBUG] SFTP download error', { mediaId: media._id, path: media.path, message: sftpError.message, stack: sftpError.stack });
-                throw sftpError;
+                await this.sftpConnections[source._id].ensureTempDir();
+                inputPath = await this.sftpConnections[source._id].downloadFile(media.path);
+                needsCleanup = true;
+                console.debug(`[DEBUG] Downloaded SFTP file to ${inputPath}`);
               }
-            }
 
-            let thumbPath, thumbStats;
-            console.debug(`[DEBUG] Attempting thumbnail generation for type: ${media.type}`);
-            if (media.type === 'image') {
-              thumbPath = await this.thumbnailService.generateImageThumbnail(inputPath, media.hash);
-              thumbStats = await fs.stat(thumbPath);
-              console.debug(`[DEBUG] Image thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
-            } else if (media.type === 'video') {
-              thumbPath = await this.thumbnailService.generateVideoThumbnail(inputPath, media.hash);
-              thumbStats = await fs.stat(thumbPath);
-              console.debug(`[DEBUG] Video thumbnail generated: ${thumbPath}, Size: ${thumbStats.size}`);
-            } else {
-               console.warn(`[WARN] Unsupported media type for thumbnail generation: ${media.type} for ${media._id}`);
-               throw new Error(`Unsupported media type: ${media.type}`);
-            }
+                // Generate thumbnail based on media type
+                let outputPath;
+                if (!media.type) {
+                  console.warn(`[WARN] Media type not defined for ${media._id}, attempting to detect from path`);
+                  const ext = path.extname(media.path).toLowerCase();
+                  media.type = ext.match(/\.(jpg|jpeg|png|gif)$/) ? 'image' : 'video';
+                }
+                
+                if (media.type === 'image' || media.type.startsWith('image/')) {
+                  outputPath = await this.thumbnailService.generateImageThumbnail(inputPath, media.hash);
+                } else if (media.type === 'video' || media.type.startsWith('video/')) {
+                  outputPath = await this.thumbnailService.generateVideoThumbnail(inputPath, media.hash);
+                } else {
+                  throw new Error(`Unsupported media type: ${media.type}`);
+                }
 
-            const updateData = {
-              $set: {
-                has_thumb: true,
-                thumb_pending: false,
-                thumb_path: thumbPath,
-                thumb_size: thumbStats.size,
-                thumb_size_human: formatBytes(thumbStats.size)
-              },
-              $inc: { thumb_attempts: 1 }
-            };
-            console.debug(`[DEBUG] Preparing SUCCESS update for ${media._id}:`, JSON.stringify(updateData));
-
-            const updateResult = await this.db.collection('media').updateOne(
-              { _id: media._id },
-              updateData
-            );
-            console.debug(`[DEBUG] SUCCESS DB update result for ${media._id}:`, JSON.stringify(updateResult));
-            if (updateResult.modifiedCount === 1) {
-               batchSuccessCount++;
-               totalSuccessCount++;
-            } else {
-               console.warn(`[WARN] Thumbnail generated but DB update modified ${updateResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
-               batchFailureCount++;
-               totalFailureCount++;
-            }
-
-            const historyDataSuccess = {
-              mediaId: media._id,
-              sourceId: media.sourceId,
-              timestamp: new Date(),
-              status: 'success',
-              duration: Date.now() - genStartTime,
-              input_size: media.size,
-              output_size: thumbStats.size,
-              attempt: (media.thumb_attempts || 0) + 1
-            };
-            console.debug(`[DEBUG] Inserting SUCCESS history for ${media._id}:`, JSON.stringify(historyDataSuccess));
-
-            await this.db.collection('thumbnail_history').insertOne(historyDataSuccess);
-
-            this.processedCount++;
-            this.lastProcessedTime = Date.now();
-            console.debug(`[DEBUG] Successfully generated thumbnail for ${media._id}`);
-
-            await this.sleep(cooldownTime);
-          } catch (error) {
-            batchFailureCount++;
-            totalFailureCount++;
-            logger.error('Thumbnail generation failed:', {
-              mediaId: media._id.toString(),
-              path: media.path,
-              error: error.message,
-              stack: error.stack
-            });
-            console.error(`[ERROR_DEBUG] Thumbnail generation failed for ${media._id}: ${error.message}`);
-
-            const currentAttempts = (media.thumb_attempts || 0) + 1;
-            const shouldRetry = currentAttempts < this.maxAttempts;
-            console.debug(`[DEBUG] Failure on attempt ${currentAttempts} for ${media._id}. Max attempts: ${this.maxAttempts}. Should retry: ${shouldRetry}`);
-
-            const updateFailureData = {
-              $inc: { thumb_attempts: 1 },
-              $set: {
-                thumb_pending: shouldRetry
+              // Cleanup temp file if needed
+              if (needsCleanup) {
+                try {
+                  await this.sftpConnections[source._id].cleanupTempFile(inputPath);
+                } catch (cleanupError) {
+                  console.warn(`[WARN] Failed to cleanup temp file ${inputPath}:`, cleanupError);
+                }
               }
-            };
-            console.debug(`[DEBUG] Preparing FAILURE update for ${media._id}:`, JSON.stringify(updateFailureData));
 
-            const updateFailureResult = await this.db.collection('media').updateOne(
-              { _id: media._id },
-              updateFailureData
-            );
-            console.debug(`[DEBUG] FAILURE DB update result for ${media._id}:`, JSON.stringify(updateFailureResult));
-            if (updateFailureResult.modifiedCount !== 1) {
-               console.warn(`[WARN] Thumbnail failed and DB update modified ${updateFailureResult.modifiedCount} docs for ${media._id}. Check if document still exists and matches filter.`);
+              // Update database
+              await this.db.collection('media').updateOne(
+                { _id: media._id },
+                { $set: { has_thumb: true, thumb_pending: false }, $inc: { thumb_attempts: 1 } }
+              );
+
+              // Record history
+              await this.db.collection('thumbnail_history').insertOne({
+                mediaId: media._id,
+                sourceId: media.sourceId,
+                timestamp: new Date(),
+                status: 'success',
+                duration: Date.now() - this.lastProcessedTime
+              });
+
+              this.processedCount++;
+              this.processedCount++;
+              this.lastProcessedTime = Date.now();
+              console.debug(`[DEBUG] Successfully generated thumbnail for ${media._id}`);
+              return true;
+            } catch (error) {
+              console.error(`[ERROR] Failed to process thumbnail for ${media._id}:`, error);
+
+
+              // Update failure in database
+              await this.db.collection('media').updateOne(
+                { _id: media._id },
+                { $set: { thumb_pending: false }, $inc: { thumb_attempts: 1 } }
+              );
+
+              // Record failure in history
+              await this.db.collection('thumbnail_history').insertOne({
+                mediaId: media._id,
+                sourceId: media.sourceId,
+                timestamp: new Date(),
+                status: 'error',
+                error: error.message,
+                duration: Date.now() - this.lastProcessedTime
+              });
+              return false;
             }
+          });
 
-            const historyDataFailure = {
-              mediaId: media._id,
-              sourceId: media.sourceId,
-              timestamp: new Date(),
-              status: 'failed',
-              error: error.message,
-              duration: Date.now() - genStartTime,
-              input_size: media.size,
-              attempt: currentAttempts
-            };
-            console.debug(`[DEBUG] Inserting FAILURE history for ${media._id}:`, JSON.stringify(historyDataFailure));
+          // Wait for all promises in chunk to complete
+          await Promise.all(promises);
 
-            await this.db.collection('thumbnail_history').insertOne(historyDataFailure);
-
-            await this.sleep(this.cpuCooldown);
-          }
-
-          if(process.env.THUMB_GENERATION_DEBUG === '1') {
-            console.debug(`[DEBUG] Batch #${batchNumber}: Batch Results: ${batchSuccessCount} success, ${batchFailureCount} failures. Duration: ${Date.now() - batchStartTime}ms`);
-            process.exit(0)
+          // Apply CPU cooldown after each chunk if needed
+          if (this.cpuCooldown > 0) {
+            await this.sleep(this.cpuCooldown * 1000);
           }
         }
 
@@ -351,14 +303,39 @@ class ThumbnailGenerationService {
 
     const cpuUsage = await this.getCPUUsage();
 
-    // Calculate work ratio
+    // Calculate work ratio and time estimates
     let workRatio = 0;
     let elapsedTime = 0;
+    let remainingTime = null;
+    let estimatedCompletionTime = null;
+
     if (this.isGenerating && this.processingStartTime) {
       elapsedTime = Math.floor((Date.now() - this.processingStartTime) / 1000);
       if (elapsedTime > 0) {
         workRatio = (this.processedCount / elapsedTime).toFixed(2);
+        
+        // Calculate remaining time if we have a valid work ratio
+        if (parseFloat(workRatio) > 0) {
+          const remainingItems = pendingCount;
+          remainingTime = Math.ceil(remainingItems / parseFloat(workRatio));
+          estimatedCompletionTime = new Date(Date.now() + (remainingTime * 1000));
+        }
       }
+    }
+
+    // Format remaining time
+    let remainingTimeFormatted = null;
+    if (remainingTime !== null) {
+      const hours = Math.floor(remainingTime / 3600);
+      const minutes = Math.floor((remainingTime % 3600) / 60);
+      const seconds = remainingTime % 60;
+      
+      const parts = [];
+      if (hours > 0) parts.push(`${hours}h`);
+      if (minutes > 0) parts.push(`${minutes}m`);
+      if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+      
+      remainingTimeFormatted = parts.join(' ');
     }
 
     const status = {
@@ -370,7 +347,9 @@ class ThumbnailGenerationService {
       cpuThrottling: cpuUsage > this.cpuUsageLimit,
       workRatio,
       processedCount: this.processedCount,
-      elapsedTime
+      elapsedTime,
+      remainingTime: remainingTimeFormatted,
+      estimatedCompletionTime: estimatedCompletionTime?.toLocaleString() || null
     };
     console.debug('[DEBUG] Returning status:', status);
     return status;
